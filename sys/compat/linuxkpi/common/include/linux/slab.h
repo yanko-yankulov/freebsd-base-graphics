@@ -54,6 +54,7 @@ MALLOC_DECLARE(M_KMALLOC);
 #define	kvfree(arg)			kfree(arg)
 #define	vmalloc(size)                   kmalloc(size, GFP_KERNEL)
 #define	vmalloc_node(size, node)        kmalloc(size, GFP_KERNEL)
+#define	vmalloc_user(size)              kmalloc(size, GFP_KERNEL | __GFP_ZERO)
 
 struct kmem_cache {
 	uma_zone_t	cache_zone;
