@@ -49,7 +49,6 @@ typedef unsigned int drm_handle_t;
 
 #include <sys/ioccom.h>
 #include <sys/types.h>
-#include <linux/types.h>
 typedef unsigned long drm_handle_t;
 
 #include <dev/drm2/drm_os_freebsd.h>

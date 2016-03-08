@@ -51,8 +51,6 @@ __FBSDID("$FreeBSD$");
 
 #include <sys/sysent.h>
 
-#include <linux/slab.h>
-
 #include <dev/drm2/drmP.h>
 #include <dev/drm2/drm_core.h>
 #include <dev/drm2/drm_global.h>

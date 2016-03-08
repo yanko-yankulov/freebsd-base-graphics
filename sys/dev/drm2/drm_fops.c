@@ -36,7 +36,6 @@
 
 #include <sys/cdefs.h>
 __FBSDID("$FreeBSD$");
-#include <linux/slab.h>
 
 #include <dev/drm2/drmP.h>
 
@@ -517,7 +516,7 @@ drm_read(struct cdev *kdev, struct uio *uio, int ioflag)
 			error = EAGAIN;
 			goto out;
 		}
-		error = msleep(&file_priv->event_space, &dev->event_lock,
+		error = bsd_msleep(&file_priv->event_space, &dev->event_lock,
 	           PCATCH, "drmrea", 0);
 	       if (error != 0)
 		       goto out;

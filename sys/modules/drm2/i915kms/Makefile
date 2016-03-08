@@ -43,6 +43,7 @@ SRCS	= \
 	intel_tv.c
 
 CFLAGS+= -I${.CURDIR}/../../../compat/linuxkpi/common/include
+CFLAGS+= '-DKBUILD_MODNAME="${KMOD}"'
 
 .if ${MACHINE_CPUARCH} == "amd64"
 SRCS	+= i915_ioc32.c

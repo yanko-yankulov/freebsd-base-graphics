@@ -35,9 +35,10 @@
 
 #include <sys/cdefs.h>
 __FBSDID("$FreeBSD$");
-#include <linux/slab.h>
 
 #include <dev/drm2/drmP.h>
+
+#include <linux/math64.h>
 
 /* Access macro for slots in vblank timestamp ringbuffer. */
 #define vblanktimestamp(dev, crtc, count) ( \
@@ -325,7 +326,7 @@ int drm_irq_install(struct drm_device *dev)
 		sh_flags |= INTR_EXCL;
 
 	ret = -bus_setup_intr(dev->dev, dev->irqr, sh_flags, NULL,
-	    dev->driver->irq_handler, dev, &dev->irqh);
+	    (driver_intr_t *)dev->driver->irq_handler, dev, &dev->irqh);
 
 	if (ret < 0) {
 		device_printf(dev->dev, "Error setting interrupt: %d\n", -ret);
@@ -1254,8 +1255,8 @@ int drm_wait_vblank(struct drm_device *dev, void *data,
 		 * application when crtc is disabled or irq
 		 * uninstalled anyway.
 		 */
-		ret = -msleep(&dev->_vblank_count[crtc], &dev->vblank_time_lock,
-		    PCATCH, "drmvbl", 3 * hz);
+		ret = -bsd_msleep(&dev->_vblank_count[crtc],
+		    &dev->vblank_time_lock, PCATCH, "drmvbl", 3 * hz);
 		if (ret == -ERESTART)
 			ret = -ERESTARTSYS;
 		if (ret != 0)

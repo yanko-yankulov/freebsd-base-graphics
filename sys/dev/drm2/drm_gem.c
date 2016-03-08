@@ -41,8 +41,6 @@ __FBSDID("$FreeBSD$");
 #include <vm/vm.h>
 #include <vm/vm_page.h>
 
-#include <linux/slab.h>
-
 #include <dev/drm2/drmP.h>
 #include <dev/drm2/drm.h>
 #include <dev/drm2/drm_sarea.h>
@@ -116,7 +114,7 @@ int drm_gem_object_init(struct drm_device *dev,
 	    VM_PROT_READ | VM_PROT_WRITE, 0, curthread->td_ucred);
 
 	obj->refcount = 1;
-	obj->handle_count = 0;
+	atomic_set(&obj->handle_count, 0);
 	obj->size = size;
 
 	return 0;
@@ -137,7 +135,7 @@ int drm_gem_private_object_init(struct drm_device *dev,
 	obj->vm_obj = NULL;
 
 	obj->refcount = 1;
-	atomic_store_rel_int(&obj->handle_count, 0);
+	atomic_set(&obj->handle_count, 0);
 	obj->size = size;
 
 	return 0;

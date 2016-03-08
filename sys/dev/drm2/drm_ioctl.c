@@ -35,7 +35,6 @@
 
 #include <sys/cdefs.h>
 __FBSDID("$FreeBSD$");
-#include <linux/slab.h>
 
 #include <dev/drm2/drmP.h>
 #include <dev/drm2/drm_core.h>

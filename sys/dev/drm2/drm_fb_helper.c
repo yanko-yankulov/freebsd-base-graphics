@@ -30,7 +30,6 @@
 
 #include <sys/cdefs.h>
 __FBSDID("$FreeBSD$");
-#include <linux/slab.h>
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 

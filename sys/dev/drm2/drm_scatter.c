@@ -24,7 +24,6 @@
 
 #include <sys/cdefs.h>
 __FBSDID("$FreeBSD$");
-#include <linux/slab.h>
 
 /** @file drm_scatter.c
  * Allocation of memory for scatter-gather mappings by the graphics chip.

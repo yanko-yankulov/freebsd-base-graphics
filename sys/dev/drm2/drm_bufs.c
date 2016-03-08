@@ -41,9 +41,9 @@ __FBSDID("$FreeBSD$");
 
 #include <dev/pci/pcireg.h>
 
-#include <linux/slab.h>
-
 #include <dev/drm2/drmP.h>
+
+#include <linux/mm.h>
 
 /* Allocation of PCI memory resources (framebuffer, registers, etc.) for
  * drm_get_resource_*.  Note that they are not RF_ACTIVE, so there's no virtual

@@ -28,7 +28,6 @@
 
 #include <sys/cdefs.h>
 __FBSDID("$FreeBSD$");
-#include <linux/slab.h>
 
 /*
  * Generic simple memory manager implementation. Intended to be used as a base
