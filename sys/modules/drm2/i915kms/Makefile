@@ -42,6 +42,8 @@ SRCS	= \
 	intel_sprite.c \
 	intel_tv.c
 
+CFLAGS+= -I${.CURDIR}/../../../compat/linuxkpi/common/include
+
 .if ${MACHINE_CPUARCH} == "amd64"
 SRCS	+= i915_ioc32.c
 .endif

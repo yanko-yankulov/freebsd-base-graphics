@@ -54,24 +54,7 @@ __FBSDID("$FreeBSD$");
 #define	be32_to_cpu(x)	be32toh(x)
 #define	be32_to_cpup(x)	be32toh(*x)
 
-typedef vm_paddr_t dma_addr_t;
-typedef vm_paddr_t resource_size_t;
 #define	wait_queue_head_t atomic_t
-
-typedef uint64_t u64;
-typedef uint32_t u32;
-typedef uint16_t u16;
-typedef uint8_t  u8;
-typedef int64_t s64;
-typedef int32_t s32;
-typedef int16_t s16;
-typedef int8_t  s8;
-typedef uint16_t __le16;
-typedef uint32_t __le32;
-typedef uint64_t __le64;
-typedef uint16_t __be16;
-typedef uint32_t __be32;
-typedef uint64_t __be64;
 
 #define	DRM_IRQ_ARGS		void *arg
 typedef void			irqreturn_t;
@@ -80,7 +63,6 @@ typedef void			irqreturn_t;
 
 #define	__init
 #define	__exit
-#define	__read_mostly
 
 #define	BUILD_BUG_ON(x)		CTASSERT(!(x))
 #define	BUILD_BUG_ON_NOT_POWER_OF_2(x)
@@ -166,7 +148,6 @@ typedef void			irqreturn_t;
 #define	smp_wmb()			wmb()
 #define	smp_mb__before_atomic_inc()	mb()
 #define	smp_mb__after_atomic_inc()	mb()
-#define	barrier()			__compiler_membar()
 
 #define	do_div(a, b)		((a) /= (b))
 #define	div64_u64(a, b)		((a) / (b))
@@ -303,7 +284,7 @@ struct timeval	ns_to_timeval(const int64_t nsec);
 
 #define	PAGE_ALIGN(addr) round_page(addr)
 #define	page_to_phys(x) VM_PAGE_TO_PHYS(x)
-#define	offset_in_page(x) ((x) & PAGE_MASK)
+#define	offset_in_page(x) ((x) & (PAGE_SIZE - 1))
 
 #define	drm_get_device_from_kdev(_kdev)	(((struct drm_minor *)(_kdev)->si_drv1)->dev)
 
@@ -391,8 +372,8 @@ fault_in_multipages_readable(const char __user *uaddr, int size)
 	}
 
 	/* Check whether the range spilled into the next page. */
-	if (((unsigned long)uaddr & ~PAGE_MASK) ==
-			((unsigned long)end & ~PAGE_MASK)) {
+	if (((unsigned long)uaddr & ~(PAGE_SIZE - 1)) ==
+			((unsigned long)end & ~(PAGE_SIZE - 1))) {
 		ret = -copyin(end, &c, 1);
 	}
 
@@ -420,8 +401,8 @@ fault_in_multipages_writeable(char __user *uaddr, int size)
 	}
 
 	/* Check whether the range spilled into the next page. */
-	if (((unsigned long)uaddr & ~PAGE_MASK) ==
-			((unsigned long)end & ~PAGE_MASK))
+	if (((unsigned long)uaddr & ~(PAGE_SIZE - 1)) ==
+			((unsigned long)end & ~(PAGE_SIZE - 1)))
 		ret = subyte(end, 0);
 
 	return ret;

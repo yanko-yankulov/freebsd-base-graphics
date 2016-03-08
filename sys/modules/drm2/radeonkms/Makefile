@@ -87,6 +87,8 @@ SRCS	+=								\
 	si.c								\
 	si_blit_shaders.c
 
+CFLAGS+= -I${.CURDIR}/../../../compat/linuxkpi/common/include
+
 .if ${MACHINE_CPUARCH} == "amd64" || ${MACHINE_CPUARCH} == "i386"
 radeon_acpi=		radeon_acpi.c
 #radeon_atpx_handler=	radeon_atpx_handler.c
