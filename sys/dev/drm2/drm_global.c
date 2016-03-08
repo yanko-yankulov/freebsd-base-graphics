@@ -30,6 +30,7 @@
 
 #include <sys/cdefs.h>
 __FBSDID("$FreeBSD$");
+#include <linux/slab.h>
 
 #include <dev/drm2/drmP.h>
 #include <dev/drm2/drm_global.h>
@@ -75,8 +76,7 @@ int drm_global_item_ref(struct drm_global_reference *ref)
 
 	sx_xlock(&item->mutex);
 	if (item->refcount == 0) {
-		item->object = malloc(ref->size, M_DRM_GLOBAL,
-		    M_NOWAIT | M_ZERO);
+		item->object = kzalloc(ref->size, GFP_KERNEL);
 		if (unlikely(item->object == NULL)) {
 			ret = -ENOMEM;
 			goto out_err;
@@ -109,7 +109,7 @@ void drm_global_item_unref(struct drm_global_reference *ref)
 	MPASS(ref->object == item->object);
 	if (--item->refcount == 0) {
 		ref->release(ref);
-		free(item->object, M_DRM_GLOBAL);
+		kfree(item->object);
 		item->object = NULL;
 	}
 	sx_xunlock(&item->mutex);

@@ -35,6 +35,7 @@
 
 #include <sys/cdefs.h>
 __FBSDID("$FreeBSD$");
+#include <linux/slab.h>
 
 #include <dev/drm2/drmP.h>
 #include <dev/drm2/drm_core.h>
@@ -70,7 +71,7 @@ drm_unset_busid(struct drm_device *dev,
 		struct drm_master *master)
 {
 
-	free(master->unique, DRM_MEM_DRIVER);
+	kfree(master->unique);
 	master->unique = NULL;
 	master->unique_len = 0;
 	master->unique_size = 0;

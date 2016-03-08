@@ -41,6 +41,8 @@ __FBSDID("$FreeBSD$");
 #include <vm/vm.h>
 #include <vm/vm_page.h>
 
+#include <linux/slab.h>
+
 #include <dev/drm2/drmP.h>
 #include <dev/drm2/drm.h>
 #include <dev/drm2/drm_sarea.h>
@@ -73,7 +75,7 @@ drm_gem_init(struct drm_device *dev)
 
 	drm_gem_names_init(&dev->object_names);
 
-	mm = malloc(sizeof(*mm), DRM_MEM_DRIVER, M_NOWAIT);
+	mm = kzalloc(sizeof(struct drm_gem_mm), GFP_KERNEL);
 	if (!mm) {
 		DRM_ERROR("out of memory\n");
 		return -ENOMEM;
@@ -82,7 +84,7 @@ drm_gem_init(struct drm_device *dev)
 	dev->mm_private = mm;
 
 	if (drm_ht_create(&mm->offset_hash, 19)) {
-		free(mm, DRM_MEM_DRIVER);
+		kfree(mm);
 		return -ENOMEM;
 	}
 
@@ -99,7 +101,7 @@ drm_gem_destroy(struct drm_device *dev)
 	dev->mm_private = NULL;
 	drm_ht_remove(&mm->offset_hash);
 	delete_unrhdr(mm->idxunr);
-	free(mm, DRM_MEM_DRIVER);
+	kfree(mm);
 	drm_gem_names_fini(&dev->object_names);
 }
 
@@ -147,7 +149,7 @@ drm_gem_object_alloc(struct drm_device *dev, size_t size)
 {
 	struct drm_gem_object *obj;
 
-	obj = malloc(sizeof(*obj), DRM_MEM_DRIVER, M_NOWAIT | M_ZERO);
+	obj = kzalloc(sizeof(*obj), GFP_KERNEL);
 	if (!obj)
 		goto free;
 
@@ -162,7 +164,7 @@ drm_gem_object_alloc(struct drm_device *dev, size_t size)
 dealloc:
 	vm_object_deallocate(obj->vm_obj);
 free:
-	free(obj, DRM_MEM_DRIVER);
+	kfree(obj);
 	return NULL;
 }
 EXPORT_SYMBOL(drm_gem_object_alloc);

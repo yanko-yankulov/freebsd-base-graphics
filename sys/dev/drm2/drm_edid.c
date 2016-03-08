@@ -30,6 +30,7 @@
 
 #include <sys/cdefs.h>
 __FBSDID("$FreeBSD$");
+#include <linux/slab.h>
 
 #include <dev/drm2/drmP.h>
 #include <dev/drm2/drm_edid.h>
@@ -330,7 +331,7 @@ drm_do_get_edid(struct drm_connector *connector, device_t adapter)
 	u8 *block, *new;
 	bool print_bad_edid = !connector->bad_edid_counter || (drm_debug & DRM_DEBUGBITS_KMS);
 
-	if ((block = malloc(EDID_LENGTH, DRM_MEM_KMS, M_NOWAIT)) == NULL)
+	if ((block = kmalloc(EDID_LENGTH, GFP_KERNEL)) == NULL)
 		return NULL;
 
 	/* base block fetch */
@@ -351,8 +352,7 @@ drm_do_get_edid(struct drm_connector *connector, device_t adapter)
 	if (block[0x7e] == 0)
 		return block;
 
-	new = reallocf(block, (block[0x7e] + 1) * EDID_LENGTH, DRM_MEM_KMS,
-	    M_NOWAIT);
+	new = krealloc(block, (block[0x7e] + 1) * EDID_LENGTH, GFP_KERNEL);
 	if (!new)
 		goto out;
 	block = new;
@@ -381,8 +381,7 @@ drm_do_get_edid(struct drm_connector *connector, device_t adapter)
 	if (valid_extensions != block[0x7e]) {
 		block[EDID_LENGTH-1] += block[0x7e] - valid_extensions;
 		block[0x7e] = valid_extensions;
-		new = reallocf(block, (valid_extensions + 1) * EDID_LENGTH,
-		    DRM_MEM_KMS, M_NOWAIT);
+		new = krealloc(block, (valid_extensions + 1) * EDID_LENGTH, GFP_KERNEL);
 		if (!new)
 			goto out;
 		block = new;
@@ -398,7 +397,7 @@ carp:
 	connector->bad_edid_counter++;
 
 out:
-	free(block, DRM_MEM_KMS);
+	kfree(block);
 	return NULL;
 }
 

@@ -31,6 +31,7 @@
 
 #include <sys/cdefs.h>
 __FBSDID("$FreeBSD$");
+#include <linux/slab.h>
 
 #include <dev/drm2/drmP.h>
 #include <dev/drm2/drm_crtc.h>
@@ -593,23 +594,23 @@ int drm_crtc_helper_set_config(struct drm_mode_set *set)
 
 	/* Allocate space for the backup of all (non-pointer) crtc, encoder and
 	 * connector data. */
-	save_crtcs = malloc(dev->mode_config.num_crtc *
-			     sizeof(struct drm_crtc), DRM_MEM_KMS, M_NOWAIT | M_ZERO);
+	save_crtcs = kzalloc(dev->mode_config.num_crtc *
+			     sizeof(struct drm_crtc), GFP_KERNEL);
 	if (!save_crtcs)
 		return -ENOMEM;
 
-	save_encoders = malloc(dev->mode_config.num_encoder *
-				sizeof(struct drm_encoder), DRM_MEM_KMS, M_NOWAIT | M_ZERO);
+	save_encoders = kzalloc(dev->mode_config.num_encoder *
+				sizeof(struct drm_encoder), GFP_KERNEL);
 	if (!save_encoders) {
-		free(save_crtcs, DRM_MEM_KMS);
+		kfree(save_crtcs);
 		return -ENOMEM;
 	}
 
-	save_connectors = malloc(dev->mode_config.num_connector *
-				sizeof(struct drm_connector), DRM_MEM_KMS, M_NOWAIT | M_ZERO);
+	save_connectors = kzalloc(dev->mode_config.num_connector *
+				sizeof(struct drm_connector), GFP_KERNEL);
 	if (!save_connectors) {
-		free(save_crtcs, DRM_MEM_KMS);
-		free(save_encoders, DRM_MEM_KMS);
+		kfree(save_crtcs);
+		kfree(save_encoders);
 		return -ENOMEM;
 	}
 
@@ -781,9 +782,9 @@ int drm_crtc_helper_set_config(struct drm_mode_set *set)
 		}
 	}
 
-	free(save_connectors, DRM_MEM_KMS);
-	free(save_encoders, DRM_MEM_KMS);
-	free(save_crtcs, DRM_MEM_KMS);
+	kfree(save_connectors);
+	kfree(save_encoders);
+	kfree(save_crtcs);
 	return 0;
 
 fail:
@@ -809,9 +810,9 @@ fail:
 				      save_set.y, save_set.fb))
 		DRM_ERROR("failed to restore config after modeset failure\n");
 
-	free(save_connectors, DRM_MEM_KMS);
-	free(save_encoders, DRM_MEM_KMS);
-	free(save_crtcs, DRM_MEM_KMS);
+	kfree(save_connectors);
+	kfree(save_encoders);
+	kfree(save_crtcs);
 	return ret;
 }
 EXPORT_SYMBOL(drm_crtc_helper_set_config);
