@@ -31,7 +31,7 @@ __FBSDID("$FreeBSD$");
  * by mapping the pages into the GART.
  */
 
-#include <dev/drm2/drmP.h>
+#include <drm/drmP.h>
 
 #define DEBUG_SCATTER 0
 

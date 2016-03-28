@@ -32,7 +32,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/bus.h>
 #include <sys/pciio.h>
 
-#include <dev/drm2/drmP.h>
+#include <drm/drmP.h>
 #include <dev/drm2/i915/i915_drm.h>
 #include <dev/drm2/i915/i915_drv.h>
 

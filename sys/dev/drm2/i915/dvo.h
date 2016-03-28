@@ -30,7 +30,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/bus.h>
 #include <dev/iicbus/iic.h>
 #include <dev/iicbus/iiconf.h>
-#include <dev/drm2/drmP.h>
+#include <drm/drmP.h>
 #include <dev/drm2/drm_crtc.h>
 #include "intel_drv.h"
 

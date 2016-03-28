@@ -45,7 +45,7 @@
 #include <sys/cdefs.h>
 __FBSDID("$FreeBSD$");
 
-#include <dev/drm2/drmP.h>
+#include <drm/drmP.h>
 #include "radeon.h"
 
 static void radeon_sa_bo_remove_locked(struct radeon_sa_bo *sa_bo);

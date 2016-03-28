@@ -37,7 +37,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/linker.h>
 #include <sys/firmware.h>
 
-#include <dev/drm2/drmP.h>
+#include <drm/drmP.h>
 #include <dev/drm2/radeon/radeon_drm.h>
 #include "radeon_drv.h"
 #include "r300_reg.h"

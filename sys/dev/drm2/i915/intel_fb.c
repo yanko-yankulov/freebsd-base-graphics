@@ -28,7 +28,7 @@
 __FBSDID("$FreeBSD$");
 
 #include "opt_syscons.h"
-#include <dev/drm2/drmP.h>
+#include <drm/drmP.h>
 #include <dev/drm2/drm_crtc.h>
 #include <dev/drm2/drm_fb_helper.h>
 #include <dev/drm2/i915/intel_drv.h>

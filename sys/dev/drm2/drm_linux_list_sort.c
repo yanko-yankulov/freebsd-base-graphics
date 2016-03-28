@@ -27,7 +27,7 @@
  * SUCH DAMAGE.
  */
 
-#include <dev/drm2/drmP.h>
+#include <drm/drmP.h>
 __FBSDID("$FreeBSD$");
 
 struct drm_list_sort_thunk {

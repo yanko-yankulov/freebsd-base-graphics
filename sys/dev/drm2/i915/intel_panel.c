@@ -33,7 +33,7 @@ __FBSDID("$FreeBSD$");
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
-#include <dev/drm2/drmP.h>
+#include <drm/drmP.h>
 #include <dev/drm2/i915/intel_drv.h>
 
 #define PCI_LBPC 0xf4 /* legacy/combination backlight modes */

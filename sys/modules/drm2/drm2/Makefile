@@ -48,7 +48,8 @@ SRCS	= \
 	ati_pcigart.c
 #ttm_page_alloc_dma.c
 
-CFLAGS+= -I${.CURDIR}/../../../compat/linuxkpi/common/include
+CFLAGS+= -I${.CURDIR}/../../../compat/linuxkpi/common/include		\
+	 -I${.CURDIR}/../../../dev/drm2/include
 CFLAGS+= '-DKBUILD_MODNAME="${KMOD}"'
 
 .if ${MACHINE_CPUARCH} == "amd64" || ${MACHINE_ARCH} == "powerpc64"

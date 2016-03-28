@@ -27,7 +27,7 @@
 #include <sys/cdefs.h>
 __FBSDID("$FreeBSD$");
 
-#include <dev/drm2/drmP.h>
+#include <drm/drmP.h>
 
 /*
  * evergreen cards need to use the 3D engine to blit data which requires

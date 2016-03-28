@@ -32,7 +32,7 @@
 #include <sys/cdefs.h>
 __FBSDID("$FreeBSD$");
 
-#include <dev/drm2/drmP.h>
+#include <drm/drmP.h>
 #include <dev/drm2/drm_crtc.h>
 #include <dev/drm2/drm_fourcc.h>
 #include <dev/drm2/drm_crtc_helper.h>

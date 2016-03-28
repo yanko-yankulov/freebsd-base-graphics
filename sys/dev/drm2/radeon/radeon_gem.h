@@ -5,7 +5,7 @@ __FBSDID("$FreeBSD$");
 #ifndef __RADEON_GEM_H__
 #define	__RADEON_GEM_H__
 
-#include <dev/drm2/drmP.h>
+#include <drm/drmP.h>
 
 int radeon_gem_object_init(struct drm_gem_object *obj);
 void radeon_gem_object_free(struct drm_gem_object *obj);

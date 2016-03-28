@@ -5,7 +5,7 @@ __FBSDID("$FreeBSD$");
 #ifndef __RADEON_KMS_H__
 #define	__RADEON_KMS_H__
 
-#include <dev/drm2/drmP.h>
+#include <drm/drmP.h>
 
 int radeon_driver_load_kms(struct drm_device *dev, unsigned long flags);
 int radeon_driver_unload_kms(struct drm_device *dev);

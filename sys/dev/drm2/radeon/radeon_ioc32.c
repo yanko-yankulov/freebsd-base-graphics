@@ -35,7 +35,7 @@ __FBSDID("$FreeBSD$");
 
 #ifdef COMPAT_FREEBSD32
 
-#include <dev/drm2/drmP.h>
+#include <drm/drmP.h>
 #include <dev/drm2/drm.h>
 #include <dev/drm2/radeon/radeon_drm.h>
 #include "radeon_drv.h"

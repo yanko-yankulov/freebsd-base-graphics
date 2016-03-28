@@ -38,7 +38,7 @@ __FBSDID("$FreeBSD$");
 #include <dev/drm2/ttm/ttm_placement.h>
 #include <dev/drm2/ttm/ttm_module.h>
 #include <dev/drm2/ttm/ttm_page_alloc.h>
-#include <dev/drm2/drmP.h>
+#include <drm/drmP.h>
 #include <dev/drm2/radeon/radeon_drm.h>
 #include "radeon_reg.h"
 #include "radeon.h"

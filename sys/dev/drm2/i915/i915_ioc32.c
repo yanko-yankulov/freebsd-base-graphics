@@ -38,7 +38,7 @@ __FBSDID("$FreeBSD$");
  * 32-bit ioctl compatibility routines for the i915 DRM.
  */
 
-#include <dev/drm2/drmP.h>
+#include <drm/drmP.h>
 #include <dev/drm2/drm.h>
 #include <dev/drm2/i915/i915_drm.h>
 #include <dev/drm2/i915/i915_drv.h>

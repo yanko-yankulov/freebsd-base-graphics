@@ -27,7 +27,7 @@
 #include <sys/cdefs.h>
 __FBSDID("$FreeBSD$");
 
-#include <dev/drm2/drmP.h>
+#include <drm/drmP.h>
 #include <dev/drm2/radeon/radeon_drm.h>
 #include "radeon.h"
 #include "radeon_asic.h" /* Declares several prototypes; clang is pleased. */

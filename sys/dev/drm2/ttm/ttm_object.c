@@ -55,7 +55,7 @@ __FBSDID("$FreeBSD$");
 
 #define pr_fmt(fmt) "[TTM] " fmt
 
-#include <dev/drm2/drmP.h>
+#include <drm/drmP.h>
 #include <dev/drm2/drm.h>
 #include <sys/rwlock.h>
 #include <dev/drm2/ttm/ttm_object.h>

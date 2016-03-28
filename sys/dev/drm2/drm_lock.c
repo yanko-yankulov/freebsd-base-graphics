@@ -36,7 +36,7 @@
 #include <sys/cdefs.h>
 __FBSDID("$FreeBSD$");
 
-#include <dev/drm2/drmP.h>
+#include <drm/drmP.h>
 
 #if defined(__linux__)
 static int drm_notifier(void *priv);

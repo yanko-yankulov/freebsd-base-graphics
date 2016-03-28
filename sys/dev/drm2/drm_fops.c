@@ -37,7 +37,7 @@
 #include <sys/cdefs.h>
 __FBSDID("$FreeBSD$");
 
-#include <dev/drm2/drmP.h>
+#include <drm/drmP.h>
 
 static int drm_open_helper(struct cdev *kdev, int flags, int fmt,
 			   DRM_STRUCTPROC *p, struct drm_device *dev);

@@ -29,7 +29,7 @@
 #include <sys/cdefs.h>
 __FBSDID("$FreeBSD$");
 
-#include <dev/drm2/drmP.h>
+#include <drm/drmP.h>
 #include "radeon_reg.h"
 #include "radeon.h"
 #include "atom.h"

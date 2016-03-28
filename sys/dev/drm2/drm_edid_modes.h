@@ -25,7 +25,7 @@
  * $FreeBSD$
  */
 
-#include <dev/drm2/drmP.h>
+#include <drm/drmP.h>
 #include <dev/drm2/drm_edid.h>
 
 /*

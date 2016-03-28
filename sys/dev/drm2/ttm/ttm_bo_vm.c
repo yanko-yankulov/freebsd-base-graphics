@@ -40,7 +40,7 @@ __FBSDID("$FreeBSD$");
 
 #include "opt_vm.h"
 
-#include <dev/drm2/drmP.h>
+#include <drm/drmP.h>
 #include <dev/drm2/ttm/ttm_module.h>
 #include <dev/drm2/ttm/ttm_bo_driver.h>
 #include <dev/drm2/ttm/ttm_placement.h>

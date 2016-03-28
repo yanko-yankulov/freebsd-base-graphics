@@ -31,7 +31,7 @@ __FBSDID("$FreeBSD$");
  * Authors:
  *    Christian König <deathsimple@vodafone.de>
  */
-#include <dev/drm2/drmP.h>
+#include <drm/drmP.h>
 #include "radeon.h"
 
 

@@ -40,7 +40,7 @@ __FBSDID("$FreeBSD$");
  * Support code for mmaping of DRM maps.
  */
 
-#include <dev/drm2/drmP.h>
+#include <drm/drmP.h>
 #include <dev/drm2/drm.h>
 
 #ifdef FREEBSD_NOTYET

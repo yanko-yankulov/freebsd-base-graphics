@@ -43,7 +43,7 @@ __FBSDID("$FreeBSD$");
  *		needed by SiS driver's memory management.
  */
 
-#include <dev/drm2/drmP.h>
+#include <drm/drmP.h>
 
 /******************************************************************/
 /** \name Context bitmap support */

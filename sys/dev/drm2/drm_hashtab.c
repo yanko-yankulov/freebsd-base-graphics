@@ -36,7 +36,7 @@ __FBSDID("$FreeBSD$");
  * Thomas Hellström <thomas-at-tungstengraphics-dot-com>
  */
 
-#include <dev/drm2/drmP.h>
+#include <drm/drmP.h>
 #include <dev/drm2/drm_hashtab.h>
 
 #include <sys/hash.h>

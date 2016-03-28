@@ -50,7 +50,7 @@
 #ifndef _TTM_LOCK_H_
 #define _TTM_LOCK_H_
 
-#include <dev/drm2/drmP.h>
+#include <drm/drmP.h>
 #include <dev/drm2/drm.h>
 #include <dev/drm2/ttm/ttm_object.h>
 

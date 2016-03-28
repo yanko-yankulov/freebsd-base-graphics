@@ -42,7 +42,8 @@ SRCS	= \
 	intel_sprite.c \
 	intel_tv.c
 
-CFLAGS+= -I${.CURDIR}/../../../compat/linuxkpi/common/include
+CFLAGS+= -I${.CURDIR}/../../../compat/linuxkpi/common/include		\
+	 -I${.CURDIR}/../../../dev/drm2/include
 CFLAGS+= '-DKBUILD_MODNAME="${KMOD}"'
 
 .if ${MACHINE_CPUARCH} == "amd64"
