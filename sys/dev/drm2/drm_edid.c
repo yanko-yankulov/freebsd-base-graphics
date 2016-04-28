@@ -352,8 +352,10 @@ drm_do_get_edid(struct drm_connector *connector, device_t adapter)
 		return block;
 
 	new = krealloc(block, (block[0x7e] + 1) * EDID_LENGTH, GFP_KERNEL);
-	if (!new)
+	if (!new) {
+		block = NULL;
 		goto out;
+	}
 	block = new;
 
 	for (j = 1; j <= block[0x7e]; j++) {
