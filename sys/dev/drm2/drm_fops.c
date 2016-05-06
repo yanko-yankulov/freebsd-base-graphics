@@ -66,14 +66,8 @@ static int drm_setup(struct drm_device * dev)
 			return i;
 	}
 
-	/*
-	 * FIXME Linux<->FreeBSD: counter incremented in drm_open() and
-	 * reset to 0 here.
-	 */
-#if 0
 	for (i = 0; i < ARRAY_SIZE(dev->counts); i++)
 		atomic_set(&dev->counts[i], 0);
-#endif
 
 	dev->sigdata.lock = NULL;
 
@@ -86,14 +80,12 @@ static int drm_setup(struct drm_device * dev)
 	DRM_INIT_WAITQUEUE(&dev->context_wait);
 	dev->if_version = 0;
 
-#ifdef FREEBSD_NOTYET
 	dev->ctx_start = 0;
 	dev->lck_start = 0;
 
 	dev->buf_async = NULL;
 	DRM_INIT_WAITQUEUE(&dev->buf_readers);
 	DRM_INIT_WAITQUEUE(&dev->buf_writers);
-#endif /* FREEBSD_NOTYET */
 
 	DRM_DEBUG("\n");
 
@@ -133,7 +125,7 @@ int drm_open(struct cdev *kdev, int flags, int fmt, DRM_STRUCTPROC *p)
 	if (!(dev = minor->dev))
 		return ENODEV;
 
-	sx_xlock(&drm_global_mutex);
+	mutex_lock(&drm_global_mutex);
 
 	/*
 	 * FIXME Linux<->FreeBSD: On Linux, counter updated outside
@@ -144,7 +136,7 @@ int drm_open(struct cdev *kdev, int flags, int fmt, DRM_STRUCTPROC *p)
 
 	retcode = drm_open_helper(kdev, flags, fmt, p, dev);
 	if (retcode) {
-		sx_xunlock(&drm_global_mutex);
+		mutex_unlock(&drm_global_mutex);
 		return (-retcode);
 	}
 	atomic_inc(&dev->counts[_DRM_STAT_OPENS]);
@@ -153,15 +145,15 @@ int drm_open(struct cdev *kdev, int flags, int fmt, DRM_STRUCTPROC *p)
 		if (retcode)
 			goto err_undo;
 	}
-	sx_xunlock(&drm_global_mutex);
+	mutex_unlock(&drm_global_mutex);
 	return 0;
 
 err_undo:
 	mtx_lock(&Giant); /* FIXME: Giant required? */
-	device_unbusy(dev->dev);
+	device_unbusy(dev->dev->bsddev);
 	mtx_unlock(&Giant);
 	dev->open_count--;
-	sx_xunlock(&drm_global_mutex);
+	mutex_unlock(&drm_global_mutex);
 	return -retcode;
 }
 EXPORT_SYMBOL(drm_open);
@@ -204,7 +196,9 @@ static int drm_open_helper(struct cdev *kdev, int flags, int fmt,
 
 	INIT_LIST_HEAD(&priv->lhead);
 	INIT_LIST_HEAD(&priv->fbs);
+	mutex_init(&priv->fbs_lock);
 	INIT_LIST_HEAD(&priv->event_list);
+	init_waitqueue_head(&priv->event_wait);
 	priv->event_space = 4096; /* set aside 4k for event buffer */
 
 	if (dev->driver->driver_features & DRIVER_GEM)
@@ -223,12 +217,12 @@ static int drm_open_helper(struct cdev *kdev, int flags, int fmt,
 
 
 	/* if there is no current master make this fd it */
-	DRM_LOCK(dev);
+	mutex_lock(&dev->struct_mutex);
 	if (!priv->minor->master) {
 		/* create a new master */
 		priv->minor->master = drm_master_create(priv->minor);
 		if (!priv->minor->master) {
-			DRM_UNLOCK(dev);
+			mutex_unlock(&dev->struct_mutex);
 			ret = -ENOMEM;
 			goto out_free;
 		}
@@ -239,42 +233,42 @@ static int drm_open_helper(struct cdev *kdev, int flags, int fmt,
 
 		priv->authenticated = 1;
 
-		DRM_UNLOCK(dev);
+		mutex_unlock(&dev->struct_mutex);
 		if (dev->driver->master_create) {
 			ret = dev->driver->master_create(dev, priv->master);
 			if (ret) {
-				DRM_LOCK(dev);
+				mutex_lock(&dev->struct_mutex);
 				/* drop both references if this fails */
 				drm_master_put(&priv->minor->master);
 				drm_master_put(&priv->master);
-				DRM_UNLOCK(dev);
+				mutex_unlock(&dev->struct_mutex);
 				goto out_free;
 			}
 		}
-		DRM_LOCK(dev);
+		mutex_lock(&dev->struct_mutex);
 		if (dev->driver->master_set) {
 			ret = dev->driver->master_set(dev, priv, true);
 			if (ret) {
 				/* drop both references if this fails */
 				drm_master_put(&priv->minor->master);
 				drm_master_put(&priv->master);
-				DRM_UNLOCK(dev);
+				mutex_unlock(&dev->struct_mutex);
 				goto out_free;
 			}
 		}
-		DRM_UNLOCK(dev);
+		mutex_unlock(&dev->struct_mutex);
 	} else {
 		/* get a reference to the master */
 		priv->master = drm_master_get(priv->minor->master);
-		DRM_UNLOCK(dev);
+		mutex_unlock(&dev->struct_mutex);
 	}
 
-	DRM_LOCK(dev);
+	mutex_lock(&dev->struct_mutex);
 	list_add(&priv->lhead, &dev->filelist);
-	DRM_UNLOCK(dev);
+	mutex_unlock(&dev->struct_mutex);
 
 	mtx_lock(&Giant); /* FIXME: Giant required? */
-	device_busy(dev->dev);
+	device_busy(dev->dev->bsddev);
 	mtx_unlock(&Giant);
 
 	ret = devfs_set_cdevpriv(priv, drm_release);
@@ -305,7 +299,7 @@ static void drm_events_release(struct drm_file *file_priv)
 	struct drm_pending_vblank_event *v, *vt;
 	unsigned long flags;
 
-	DRM_SPINLOCK_IRQSAVE(&dev->event_lock, flags);
+	spin_lock_irqsave(&dev->event_lock, flags);
 
 	/* Remove pending flips */
 	list_for_each_entry_safe(v, vt, &dev->vblank_event_list, base.link)
@@ -319,7 +313,7 @@ static void drm_events_release(struct drm_file *file_priv)
 	list_for_each_entry_safe(e, et, &file_priv->event_list, link)
 		e->destroy(e);
 
-	DRM_SPINUNLOCK_IRQRESTORE(&dev->event_lock, flags);
+	spin_unlock_irqrestore(&dev->event_lock, flags);
 }
 
 /**
@@ -339,7 +333,7 @@ void drm_release(void *data)
 	struct drm_file *file_priv = data;
 	struct drm_device *dev = file_priv->minor->dev;
 
-	sx_xlock(&drm_global_mutex);
+	mutex_lock(&drm_global_mutex);
 
 	DRM_DEBUG("open_count = %d\n", dev->open_count);
 
@@ -377,7 +371,6 @@ void drm_release(void *data)
 	if (dev->driver->driver_features & DRIVER_GEM)
 		drm_gem_release(dev, file_priv);
 
-#ifdef FREEBSD_NOTYET
 	mutex_lock(&dev->ctxlist_mutex);
 	if (!list_empty(&dev->ctxlist)) {
 		struct drm_ctx_list *pos, *n;
@@ -398,9 +391,8 @@ void drm_release(void *data)
 		}
 	}
 	mutex_unlock(&dev->ctxlist_mutex);
-#endif /* FREEBSD_NOTYET */
 
-	DRM_LOCK(dev);
+	mutex_lock(&dev->struct_mutex);
 
 	if (file_priv->is_master) {
 		struct drm_master *master = file_priv->master;
@@ -421,7 +413,7 @@ void drm_release(void *data)
 				dev->sigdata.lock = NULL;
 			master->lock.hw_lock = NULL;
 			master->lock.file_priv = NULL;
-			DRM_WAKEUP_INT(&master->lock.lock_queue);
+			wake_up_interruptible_all(&master->lock.lock_queue);
 		}
 
 		if (file_priv->minor->master == file_priv->master) {
@@ -436,7 +428,7 @@ void drm_release(void *data)
 	drm_master_put(&file_priv->master);
 	file_priv->is_master = 0;
 	list_del(&file_priv->lhead);
-	DRM_UNLOCK(dev);
+	mutex_unlock(&dev->struct_mutex);
 
 	if (dev->driver->postclose)
 		dev->driver->postclose(dev, file_priv);
@@ -454,7 +446,7 @@ void drm_release(void *data)
 
 	atomic_inc(&dev->counts[_DRM_STAT_CLOSES]);
 	mtx_lock(&Giant);
-	device_unbusy(dev->dev);
+	device_unbusy(dev->dev->bsddev);
 	mtx_unlock(&Giant);
 	if (!--dev->open_count) {
 		if (atomic_read(&dev->ioctl_count)) {
@@ -463,7 +455,7 @@ void drm_release(void *data)
 		} else
 			drm_lastclose(dev);
 	}
-	sx_xunlock(&drm_global_mutex);
+	mutex_unlock(&drm_global_mutex);
 }
 EXPORT_SYMBOL(drm_release);
 
@@ -475,7 +467,7 @@ drm_dequeue_event(struct drm_file *file_priv, struct uio *uio,
 	bool ret = false;
 
 	/* Already locked in drm_read(). */
-	/* DRM_SPINLOCK_IRQSAVE(&dev->event_lock, flags); */
+	/* spin_lock_irqsave(&dev->event_lock, flags); */
 
 	*out = NULL;
 	if (list_empty(&file_priv->event_list))
@@ -510,20 +502,20 @@ drm_read(struct cdev *kdev, struct uio *uio, int ioflag)
 	}
 
 	dev = drm_get_device_from_kdev(kdev);
-	mtx_lock(&dev->event_lock);
+	spin_lock(&dev->event_lock);
 	while (list_empty(&file_priv->event_list)) {
 		if ((ioflag & O_NONBLOCK) != 0) {
 			error = EAGAIN;
 			goto out;
 		}
-		error = bsd_msleep(&file_priv->event_space, &dev->event_lock,
+		error = bsd_msleep(&file_priv->event_space, &dev->event_lock.m,
 	           PCATCH, "drmrea", 0);
 	       if (error != 0)
 		       goto out;
 	}
 
 	while (drm_dequeue_event(file_priv, uio, &e)) {
-		mtx_unlock(&dev->event_lock);
+		spin_unlock(&dev->event_lock);
 		error = uiomove(e->event, e->event->length, uio);
 		CTR3(KTR_DRM, "drm_event_dequeued %d %d %d", curproc->p_pid,
 		    e->event->type, e->event->length);
@@ -531,11 +523,11 @@ drm_read(struct cdev *kdev, struct uio *uio, int ioflag)
 		e->destroy(e);
 		if (error != 0)
 			return (error);
-		mtx_lock(&dev->event_lock);
+		spin_lock(&dev->event_lock);
 	}
 
 out:
-	mtx_unlock(&dev->event_lock);
+	spin_unlock(&dev->event_lock);
 	return (error);
 }
 EXPORT_SYMBOL(drm_read);
@@ -548,7 +540,7 @@ drm_event_wakeup(struct drm_pending_event *e)
 
 	file_priv = e->file_priv;
 	dev = file_priv->minor->dev;
-	mtx_assert(&dev->event_lock, MA_OWNED);
+	assert_spin_locked(&dev->event_lock);
 
 	wakeup(&file_priv->event_space);
 	selwakeup(&file_priv->event_poll);
@@ -570,7 +562,7 @@ drm_poll(struct cdev *kdev, int events, struct thread *td)
 	dev = drm_get_device_from_kdev(kdev);
 
 	revents = 0;
-	mtx_lock(&dev->event_lock);
+	spin_lock(&dev->event_lock);
 	if ((events & (POLLIN | POLLRDNORM)) != 0) {
 		if (list_empty(&file_priv->event_list)) {
 			CTR0(KTR_DRM, "drm_poll empty list");
@@ -580,7 +572,7 @@ drm_poll(struct cdev *kdev, int events, struct thread *td)
 			CTR1(KTR_DRM, "drm_poll revents %x", revents);
 		}
 	}
-	mtx_unlock(&dev->event_lock);
+	spin_unlock(&dev->event_lock);
 	return (revents);
 }
 EXPORT_SYMBOL(drm_poll);

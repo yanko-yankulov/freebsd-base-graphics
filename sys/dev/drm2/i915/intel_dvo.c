@@ -339,14 +339,14 @@ static int intel_dvo_get_modes(struct drm_connector *connector)
 
 static void intel_dvo_destroy(struct drm_connector *connector)
 {
+	drm_sysfs_connector_remove(connector);
 	drm_connector_cleanup(connector);
-	free(connector, DRM_MEM_KMS);
+	kfree(connector);
 }
 
 static const struct drm_encoder_helper_funcs intel_dvo_helper_funcs = {
 	.mode_fixup = intel_dvo_mode_fixup,
 	.mode_set = intel_dvo_mode_set,
-	.disable = intel_encoder_noop,
 };
 
 static const struct drm_connector_funcs intel_dvo_connector_funcs = {
@@ -369,7 +369,7 @@ static void intel_dvo_enc_destroy(struct drm_encoder *encoder)
 	if (intel_dvo->dev.dev_ops->destroy)
 		intel_dvo->dev.dev_ops->destroy(&intel_dvo->dev);
 
-	free(intel_dvo->panel_fixed_mode, DRM_MEM_KMS);
+	kfree(intel_dvo->panel_fixed_mode);
 
 	intel_encoder_destroy(encoder);
 }
@@ -425,13 +425,13 @@ void intel_dvo_init(struct drm_device *dev)
 	int i;
 	int encoder_type = DRM_MODE_ENCODER_NONE;
 
-	intel_dvo = malloc(sizeof(struct intel_dvo), DRM_MEM_KMS, M_WAITOK | M_ZERO);
+	intel_dvo = kzalloc(sizeof(struct intel_dvo), GFP_KERNEL);
 	if (!intel_dvo)
 		return;
 
-	intel_connector = malloc(sizeof(struct intel_connector), DRM_MEM_KMS, M_WAITOK | M_ZERO);
+	intel_connector = kzalloc(sizeof(struct intel_connector), GFP_KERNEL);
 	if (!intel_connector) {
-		free(intel_dvo, DRM_MEM_KMS);
+		kfree(intel_dvo);
 		return;
 	}
 
@@ -448,7 +448,7 @@ void intel_dvo_init(struct drm_device *dev)
 	for (i = 0; i < ARRAY_SIZE(intel_dvo_devices); i++) {
 		struct drm_connector *connector = &intel_connector->base;
 		const struct intel_dvo_device *dvo = &intel_dvo_devices[i];
-		device_t i2c;
+		struct i2c_adapter *i2c;
 		int gpio;
 		bool dvoinit;
 
@@ -525,10 +525,11 @@ void intel_dvo_init(struct drm_device *dev)
 			intel_dvo->panel_wants_dither = true;
 		}
 
+		drm_sysfs_connector_add(connector);
 		return;
 	}
 
 	drm_encoder_cleanup(&intel_encoder->base);
-	free(intel_dvo, DRM_MEM_KMS);
-	free(intel_connector, DRM_MEM_KMS);
+	kfree(intel_dvo);
+	kfree(intel_connector);
 }

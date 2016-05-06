@@ -54,7 +54,8 @@ ivb_update_plane(struct drm_plane *plane, struct drm_framebuffer *fb,
 	u32 sprctl, sprscale = 0;
 	unsigned long sprsurf_offset, linear_offset;
 	int pixel_size = drm_format_plane_cpp(fb->pixel_format, 0);
-
+	bool scaling_was_enabled = dev_priv->sprite_scaling_enabled;
+	
 	sprctl = I915_READ(SPRCTL(pipe));
 
 	/* Mask out pixel format bits in case we change it */
@@ -93,6 +94,8 @@ ivb_update_plane(struct drm_plane *plane, struct drm_framebuffer *fb,
 	sprctl |= SPRITE_TRICKLE_FEED_DISABLE;
 	sprctl |= SPRITE_ENABLE;
 
+	if (IS_HASWELL(dev))
+		sprctl |= SPRITE_PIPE_CSC_ENABLE;
 	/* Sizes are 0 based */
 	src_w--;
 	src_h--;
@@ -107,19 +110,15 @@ ivb_update_plane(struct drm_plane *plane, struct drm_framebuffer *fb,
 	 * when scaling is disabled.
 	 */
 	if (crtc_w != src_w || crtc_h != src_h) {
-		if (!dev_priv->sprite_scaling_enabled) {
-			dev_priv->sprite_scaling_enabled = true;
+		dev_priv->sprite_scaling_enabled |= 1 << pipe;
+
+		if (!scaling_was_enabled) {
 			intel_update_watermarks(dev);
 			intel_wait_for_vblank(dev, pipe);
 		}
 		sprscale = SPRITE_SCALE_ENABLE | (src_w << 16) | src_h;
-	} else {
-		if (dev_priv->sprite_scaling_enabled) {
-			dev_priv->sprite_scaling_enabled = false;
-			/* potentially re-enable LP watermarks */
-			intel_update_watermarks(dev);
-		}
-	}
+	} else
+		dev_priv->sprite_scaling_enabled &= ~(1 << pipe);
 
 	I915_WRITE(SPRSTRIDE(pipe), fb->pitches[0]);
 	I915_WRITE(SPRPOS(pipe), (crtc_y << 16) | crtc_x);
@@ -145,6 +144,10 @@ ivb_update_plane(struct drm_plane *plane, struct drm_framebuffer *fb,
 	I915_WRITE(SPRCTL(pipe), sprctl);
 	I915_MODIFY_DISPBASE(SPRSURF(pipe), obj->gtt_offset + sprsurf_offset);
 	POSTING_READ(SPRSURF(pipe));
+
+	/* potentially re-enable LP watermarks */
+	if (scaling_was_enabled && !dev_priv->sprite_scaling_enabled)
+		intel_update_watermarks(dev);
 }
 
 static void
@@ -154,6 +157,7 @@ ivb_disable_plane(struct drm_plane *plane)
 	struct drm_i915_private *dev_priv = dev->dev_private;
 	struct intel_plane *intel_plane = to_intel_plane(plane);
 	int pipe = intel_plane->pipe;
+	bool scaling_was_enabled = dev_priv->sprite_scaling_enabled;
 
 	I915_WRITE(SPRCTL(pipe), I915_READ(SPRCTL(pipe)) & ~SPRITE_ENABLE);
 	/* Can't leave the scaler enabled... */
@@ -163,7 +167,10 @@ ivb_disable_plane(struct drm_plane *plane)
 	I915_MODIFY_DISPBASE(SPRSURF(pipe), 0);
 	POSTING_READ(SPRSURF(pipe));
 
-	dev_priv->sprite_scaling_enabled = false;
+	dev_priv->sprite_scaling_enabled &= ~(1 << pipe);
+
+	/* potentially re-enable LP watermarks */
+	if (scaling_was_enabled && !dev_priv->sprite_scaling_enabled)
 	intel_update_watermarks(dev);
 }
 
@@ -507,7 +514,7 @@ intel_update_plane(struct drm_plane *plane, struct drm_crtc *crtc,
 	    (crtc_w == primary_w) && (crtc_h == primary_h))
 		disable_primary = true;
 
-	DRM_LOCK(dev);
+	mutex_lock(&dev->struct_mutex);
 
 	ret = intel_pin_and_fence_fb_obj(dev, obj, NULL);
 	if (ret)
@@ -537,15 +544,15 @@ intel_update_plane(struct drm_plane *plane, struct drm_crtc *crtc,
 		 * do the pin & ref bookkeeping.
 		 */
 		if (old_obj != obj) {
-			DRM_UNLOCK(dev);
+			mutex_unlock(&dev->struct_mutex);
 			intel_wait_for_vblank(dev, to_intel_crtc(crtc)->pipe);
-			DRM_LOCK(dev);
+			mutex_lock(&dev->struct_mutex);
 		}
 		intel_unpin_fb_obj(old_obj);
 	}
 
 out_unlock:
-	DRM_UNLOCK(dev);
+	mutex_unlock(&dev->struct_mutex);
 out:
 	return ret;
 }
@@ -564,10 +571,10 @@ intel_disable_plane(struct drm_plane *plane)
 	if (!intel_plane->obj)
 		goto out;
 
-	DRM_LOCK(dev);
+	mutex_lock(&dev->struct_mutex);
 	intel_unpin_fb_obj(intel_plane->obj);
 	intel_plane->obj = NULL;
-	DRM_UNLOCK(dev);
+	mutex_unlock(&dev->struct_mutex);
 out:
 
 	return ret;
@@ -578,7 +585,7 @@ static void intel_destroy_plane(struct drm_plane *plane)
 	struct intel_plane *intel_plane = to_intel_plane(plane);
 	intel_disable_plane(plane);
 	drm_plane_cleanup(plane);
-	free(intel_plane, DRM_MEM_KMS);
+	kfree(intel_plane);
 }
 
 int intel_sprite_set_colorkey(struct drm_device *dev, void *data,
@@ -597,7 +604,7 @@ int intel_sprite_set_colorkey(struct drm_device *dev, void *data,
 	if ((set->flags & (I915_SET_COLORKEY_DESTINATION | I915_SET_COLORKEY_SOURCE)) == (I915_SET_COLORKEY_DESTINATION | I915_SET_COLORKEY_SOURCE))
 		return -EINVAL;
 
-	sx_xlock(&dev->mode_config.mutex);
+	drm_modeset_lock_all(dev);
 
 	obj = drm_mode_object_find(dev, set->plane_id, DRM_MODE_OBJECT_PLANE);
 	if (!obj) {
@@ -610,7 +617,7 @@ int intel_sprite_set_colorkey(struct drm_device *dev, void *data,
 	ret = intel_plane->update_colorkey(plane, set);
 
 out_unlock:
-	sx_xunlock(&dev->mode_config.mutex);
+	drm_modeset_unlock_all(dev);
 	return ret;
 }
 
@@ -626,7 +633,7 @@ int intel_sprite_get_colorkey(struct drm_device *dev, void *data,
 	if (!drm_core_check_feature(dev, DRIVER_MODESET))
 		return -ENODEV;
 
-	sx_xlock(&dev->mode_config.mutex);
+	drm_modeset_lock_all(dev);
 
 	obj = drm_mode_object_find(dev, get->plane_id, DRM_MODE_OBJECT_PLANE);
 	if (!obj) {
@@ -639,7 +646,7 @@ int intel_sprite_get_colorkey(struct drm_device *dev, void *data,
 	intel_plane->get_colorkey(plane, get);
 
 out_unlock:
-	sx_xunlock(&dev->mode_config.mutex);
+	drm_modeset_unlock_all(dev);
 	return ret;
 }
 
@@ -678,7 +685,7 @@ intel_plane_init(struct drm_device *dev, enum pipe pipe)
 	if (INTEL_INFO(dev)->gen < 5)
 		return -ENODEV;
 
-	intel_plane = malloc(sizeof(struct intel_plane), DRM_MEM_KMS, M_WAITOK | M_ZERO);
+	intel_plane = kzalloc(sizeof(struct intel_plane), GFP_KERNEL);
 	if (!intel_plane)
 		return -ENOMEM;
 
@@ -717,7 +724,7 @@ intel_plane_init(struct drm_device *dev, enum pipe pipe)
 		break;
 
 	default:
-		free(intel_plane, DRM_MEM_KMS);
+		kfree(intel_plane);
 		return -ENODEV;
 	}
 
@@ -728,7 +735,7 @@ intel_plane_init(struct drm_device *dev, enum pipe pipe)
 			     plane_formats, num_plane_formats,
 			     false);
 	if (ret)
-		free(intel_plane, DRM_MEM_KMS);
+		kfree(intel_plane);
 
 	return ret;
 }

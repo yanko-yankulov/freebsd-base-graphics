@@ -34,10 +34,12 @@
 #include <linux/types.h>
 
 #include <sys/param.h>
+#include <sys/eventhandler.h>
 
 #include <machine/atomic.h>
 #include <vm/vm.h>
 #include <vm/vm_page.h>
+#include <vm/pmap.h>
 
 #define page	vm_page
 
@@ -60,5 +62,76 @@
 #define	round_page(x)	((((uintptr_t)(x)) + PAGE_SIZE-1) & ~(PAGE_SIZE-1))
 #undef	trunc_page
 #define	trunc_page(x)	((uintptr_t)(x) & ~(PAGE_SIZE-1))
+
+struct io_mapping {
+	vm_paddr_t base;
+	unsigned long size;
+	vm_prot_t prot;
+	struct resource *r;
+};
+/* XXX note that this is incomplete */
+void *kmap(vm_page_t page);
+void *kmap_atomic(vm_page_t page);
+void kunmap(vm_page_t page);
+void kunmap_atomic(void *vaddr);
+void page_cache_release(vm_page_t page);
+
+void *acpi_os_ioremap(vm_paddr_t pa, vm_size_t size);
+
+
+extern struct io_mapping *io_mapping_create_wc(vm_paddr_t base, unsigned long size);
+extern void unmap_mapping_range(void *obj,
+				loff_t const holebegin, loff_t const holelen, int even_cows);
+extern void io_mapping_free(struct io_mapping *mapping);
+extern void * iomap_atomic_prot_pfn(unsigned long pfn, vm_prot_t prot);
+
+void iounmap_atomic(void *vaddr);
+
+
+static inline void
+io_mapping_unmap_atomic(void *vaddr)
+{
+	iounmap_atomic(vaddr);
+}
+
+extern void *io_mapping_map_atomic_wc(struct io_mapping *mapping, unsigned long offset);
+extern void *io_mapping_map_wc(struct io_mapping *mapping, unsigned long offset);
+extern int set_memory_wc(unsigned long addr, int numpages);
+
+static inline int
+set_memory_wb(unsigned long addr, int numpages)
+{
+
+	return (pmap_change_attr(addr, numpages, PAT_WRITE_BACK));
+}
+
+static inline int
+set_pages_wb(vm_page_t page, int numpages)
+{
+	unsigned long addr = (unsigned long)VM_PAGE_TO_PHYS(page);
+
+	return set_memory_wb(addr, numpages);
+}
+
+vm_page_t alloc_page(gfp_t gfp);
+void __free_page(vm_page_t page);
+
+/* bump refcount */
+int set_pages_uc(vm_page_t page, int numpages);
+int set_memory_uc(unsigned long addr, int numpages);
+vm_paddr_t page_to_phys(vm_page_t page);
+
+void *acpi_os_ioremap(vm_paddr_t pa, vm_size_t size);
+
+void unmap_mapping_range(void *obj,
+			 loff_t const holebegin, loff_t const holelen, int even_cows);
+
+#define cpu_has_pat pat_works
+
+static inline void
+unregister_shrinker(eventhandler_tag shrinker)
+{
+	EVENTHANDLER_DEREGISTER(vm_lowmem, shrinker);	
+}
 
 #endif	/* _LINUX_PAGE_H_ */

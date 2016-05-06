@@ -93,15 +93,10 @@ struct ns2501_priv {
 static void enable_dvo(struct intel_dvo_device *dvo)
 {
 	struct ns2501_priv *ns = (struct ns2501_priv *)(dvo->dev_priv);
-	device_t adapter = dvo->i2c_bus;
-	/*
-	 * FIXME Linux<->FreeBSD: device_get_softc() returns a struct
-	 * intel_iic_softc in reality, where struct intel_gmbus is
-	 * the first member. struct intel_iic_softc is defined in
-	 * intel_iic.c.
-	 */
-	struct intel_gmbus *bus =
-	    (struct intel_gmbus *)device_get_softc(adapter);
+	struct i2c_adapter *adapter = dvo->i2c_bus;
+	struct intel_gmbus *bus = container_of(adapter,
+					       struct intel_gmbus,
+					       adapter);
 	struct drm_i915_private *dev_priv = bus->dev_priv;
 
 	DRM_DEBUG_KMS("%s: Trying to re-enable the DVO\n", __FUNCTION__);
@@ -125,15 +120,10 @@ static void enable_dvo(struct intel_dvo_device *dvo)
  */
 static void restore_dvo(struct intel_dvo_device *dvo)
 {
-	device_t adapter = dvo->i2c_bus;
-	/*
-	 * FIXME Linux<->FreeBSD: device_get_softc() returns a struct
-	 * intel_iic_softc in reality, where struct intel_gmbus is
-	 * the first member. struct intel_iic_softc is defined in
-	 * intel_iic.c.
-	 */
-	struct intel_gmbus *bus =
-	    (struct intel_gmbus *)device_get_softc(adapter);
+	struct i2c_adapter *adapter = dvo->i2c_bus;
+	struct intel_gmbus *bus = container_of(adapter,
+					      struct intel_gmbus,
+					      adapter);
 	struct drm_i915_private *dev_priv = bus->dev_priv;
 	struct ns2501_priv *ns = (struct ns2501_priv *)(dvo->dev_priv);
 
@@ -152,19 +142,19 @@ static void restore_dvo(struct intel_dvo_device *dvo)
 static bool ns2501_readb(struct intel_dvo_device *dvo, int addr, uint8_t * ch)
 {
 	struct ns2501_priv *ns = dvo->dev_priv;
-	device_t adapter = dvo->i2c_bus;
+	struct i2c_adapter *adapter = dvo->i2c_bus;
 	u8 out_buf[2];
 	u8 in_buf[2];
 
-	struct iic_msg msgs[] = {
+	struct i2c_msg msgs[] = {
 		{
-		 .slave = dvo->slave_addr << 1,
+		 .addr = dvo->slave_addr,
 		 .flags = 0,
 		 .len = 1,
 		 .buf = out_buf,
 		 },
 		{
-		 .slave = dvo->slave_addr << 1,
+		 .addr = dvo->slave_addr,
 		 .flags = I2C_M_RD,
 		 .len = 1,
 		 .buf = in_buf,
@@ -174,15 +164,15 @@ static bool ns2501_readb(struct intel_dvo_device *dvo, int addr, uint8_t * ch)
 	out_buf[0] = addr;
 	out_buf[1] = 0;
 
-	if (-iicbus_transfer(adapter, msgs, 2) == 0) {
+	if (i2c_transfer(adapter, msgs, 2) == 2) {
 		*ch = in_buf[0];
 		return true;
-	}
+	};
 
 	if (!ns->quiet) {
 		DRM_DEBUG_KMS
 		    ("Unable to read register 0x%02x from %s:0x%02x.\n", addr,
-		     device_get_nameunit(adapter), dvo->slave_addr);
+		     adapter->name, dvo->slave_addr);
 	}
 
 	return false;
@@ -197,11 +187,11 @@ static bool ns2501_readb(struct intel_dvo_device *dvo, int addr, uint8_t * ch)
 static bool ns2501_writeb(struct intel_dvo_device *dvo, int addr, uint8_t ch)
 {
 	struct ns2501_priv *ns = dvo->dev_priv;
-	device_t adapter = dvo->i2c_bus;
+	struct i2c_adapter *adapter = dvo->i2c_bus;
 	uint8_t out_buf[2];
 
-	struct iic_msg msg = {
-		.slave = dvo->slave_addr << 1,
+	struct i2c_msg msg = {
+		.addr = dvo->slave_addr,
 		.flags = 0,
 		.len = 2,
 		.buf = out_buf,
@@ -210,13 +200,13 @@ static bool ns2501_writeb(struct intel_dvo_device *dvo, int addr, uint8_t ch)
 	out_buf[0] = addr;
 	out_buf[1] = ch;
 
-	if (-iicbus_transfer(adapter, &msg, 1) == 0) {
+	if (i2c_transfer(adapter, &msg, 1) == 1) {
 		return true;
 	}
 
 	if (!ns->quiet) {
 		DRM_DEBUG_KMS("Unable to write register 0x%02x to %s:%d\n",
-			      addr, device_get_nameunit(adapter), dvo->slave_addr);
+			      addr, adapter->name, dvo->slave_addr);
 	}
 
 	return false;
@@ -229,13 +219,13 @@ static bool ns2501_writeb(struct intel_dvo_device *dvo, int addr, uint8_t ch)
  * Bummer!
  */
 static bool ns2501_init(struct intel_dvo_device *dvo,
-			device_t adapter)
+			struct i2c_adapter *adapter)
 {
 	/* this will detect the NS2501 chip on the specified i2c bus */
 	struct ns2501_priv *ns;
 	unsigned char ch;
 
-	ns = malloc(sizeof(struct ns2501_priv), DRM_MEM_KMS, M_NOWAIT | M_ZERO);
+	ns = kzalloc(sizeof(struct ns2501_priv), GFP_KERNEL);
 	if (ns == NULL)
 		return false;
 
@@ -248,7 +238,7 @@ static bool ns2501_init(struct intel_dvo_device *dvo,
 
 	if (ch != (NS2501_VID & 0xff)) {
 		DRM_DEBUG_KMS("ns2501 not detected got %d: from %s Slave %d.\n",
-			      ch, device_get_nameunit(adapter), dvo->slave_addr);
+			      ch, adapter->name, dvo->slave_addr);
 		goto out;
 	}
 
@@ -257,7 +247,7 @@ static bool ns2501_init(struct intel_dvo_device *dvo,
 
 	if (ch != (NS2501_DID & 0xff)) {
 		DRM_DEBUG_KMS("ns2501 not detected got %d: from %s Slave %d.\n",
-			      ch, device_get_nameunit(adapter), dvo->slave_addr);
+			      ch, adapter->name, dvo->slave_addr);
 		goto out;
 	}
 	ns->quiet = false;
@@ -269,7 +259,7 @@ static bool ns2501_init(struct intel_dvo_device *dvo,
 	return true;
 
 out:
-	free(ns, DRM_MEM_KMS);
+	kfree(ns);
 	return false;
 }
 
@@ -584,7 +574,7 @@ static void ns2501_destroy(struct intel_dvo_device *dvo)
 	struct ns2501_priv *ns = dvo->dev_priv;
 
 	if (ns) {
-		free(ns, DRM_MEM_KMS);
+		kfree(ns);
 		dvo->dev_priv = NULL;
 	}
 }

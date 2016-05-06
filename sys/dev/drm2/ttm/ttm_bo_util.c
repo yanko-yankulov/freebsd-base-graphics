@@ -72,20 +72,17 @@ int ttm_bo_move_ttm(struct ttm_buffer_object *bo,
 
 	return 0;
 }
+EXPORT_SYMBOL(ttm_bo_move_ttm);
 
 int ttm_mem_io_lock(struct ttm_mem_type_manager *man, bool interruptible)
 {
 	if (likely(man->io_reserve_fastpath))
 		return 0;
 
-	if (interruptible) {
-		if (sx_xlock_sig(&man->io_reserve_mutex))
-			return (-EINTR);
-		else
-			return (0);
-	}
+	if (interruptible)
+		return mutex_lock_interruptible(&man->io_reserve_mutex);
 
-	sx_xlock(&man->io_reserve_mutex);
+	mutex_lock(&man->io_reserve_mutex);
 	return 0;
 }
 
@@ -94,7 +91,7 @@ void ttm_mem_io_unlock(struct ttm_mem_type_manager *man)
 	if (likely(man->io_reserve_fastpath))
 		return;
 
-	sx_xunlock(&man->io_reserve_mutex);
+	mutex_unlock(&man->io_reserve_mutex);
 }
 
 static int ttm_mem_io_evict(struct ttm_mem_type_manager *man)
@@ -375,12 +372,11 @@ out:
 	ttm_bo_mem_put(bo, &old_copy);
 	return ret;
 }
-
-MALLOC_DEFINE(M_TTM_TRANSF_OBJ, "ttm_transf_obj", "TTM Transfer Objects");
+EXPORT_SYMBOL(ttm_bo_move_memcpy);
 
 static void ttm_transfered_destroy(struct ttm_buffer_object *bo)
 {
-	free(bo, M_TTM_TRANSF_OBJ);
+	kfree(bo);
 }
 
 /**
@@ -398,15 +394,17 @@ static void ttm_transfered_destroy(struct ttm_buffer_object *bo)
  * !0: Failure.
  */
 
-static int
-ttm_buffer_object_transfer(struct ttm_buffer_object *bo,
-    struct ttm_buffer_object **new_obj)
+static int ttm_buffer_object_transfer(struct ttm_buffer_object *bo,
+				      struct ttm_buffer_object **new_obj)
 {
 	struct ttm_buffer_object *fbo;
 	struct ttm_bo_device *bdev = bo->bdev;
 	struct ttm_bo_driver *driver = bdev->driver;
 
-	fbo = malloc(sizeof(*fbo), M_TTM_TRANSF_OBJ, M_WAITOK);
+	fbo = kmalloc(sizeof(*fbo), GFP_KERNEL);
+	if (!fbo)
+		return -ENOMEM;
+
 	*fbo = *bo;
 
 	/**
@@ -414,6 +412,7 @@ ttm_buffer_object_transfer(struct ttm_buffer_object *bo,
 	 * TODO: Explicit member copy would probably be better here.
 	 */
 
+	init_waitqueue_head(&fbo->event_queue);
 	INIT_LIST_HEAD(&fbo->ddestroy);
 	INIT_LIST_HEAD(&fbo->lru);
 	INIT_LIST_HEAD(&fbo->swap);
@@ -421,14 +420,14 @@ ttm_buffer_object_transfer(struct ttm_buffer_object *bo,
 	fbo->vm_node = NULL;
 	atomic_set(&fbo->cpu_writers, 0);
 
-	mtx_lock(&bdev->fence_lock);
+	spin_lock(&bdev->fence_lock);
 	if (bo->sync_obj)
 		fbo->sync_obj = driver->sync_obj_ref(bo->sync_obj);
 	else
 		fbo->sync_obj = NULL;
-	mtx_unlock(&bdev->fence_lock);
-	refcount_init(&fbo->list_kref, 1);
-	refcount_init(&fbo->kref, 1);
+	spin_unlock(&bdev->fence_lock);
+	kref_init(&fbo->list_kref);
+	kref_init(&fbo->kref);
 	fbo->destroy = &ttm_transfered_destroy;
 	fbo->acc_size = 0;
 
@@ -452,6 +451,7 @@ ttm_io_prot(uint32_t caching_flags)
 #error Port me
 #endif
 }
+EXPORT_SYMBOL(ttm_io_prot);
 
 static int ttm_bo_ioremap(struct ttm_buffer_object *bo,
 			  unsigned long offset,
@@ -484,7 +484,7 @@ static int ttm_bo_kmap_ttm(struct ttm_buffer_object *bo,
 	struct ttm_tt *ttm = bo->ttm;
 	int i, ret;
 
-	MPASS(ttm != NULL);
+	BUG_ON(!ttm);
 
 	if (ttm->state == tt_unpopulated) {
 		ret = ttm->bdev->driver->ttm_tt_populate(ttm);
@@ -534,7 +534,7 @@ int ttm_bo_kmap(struct ttm_buffer_object *bo,
 	unsigned long offset, size;
 	int ret;
 
-	MPASS(list_empty(&bo->swap));
+	BUG_ON(!list_empty(&bo->swap));
 	map->virtual = NULL;
 	map->bo = bo;
 	if (num_pages > bo->num_pages)
@@ -558,6 +558,7 @@ int ttm_bo_kmap(struct ttm_buffer_object *bo,
 		return ttm_bo_ioremap(bo, offset, size, map);
 	}
 }
+EXPORT_SYMBOL(ttm_bo_kmap);
 
 void ttm_bo_kunmap(struct ttm_bo_kmap_obj *map)
 {
@@ -582,7 +583,7 @@ void ttm_bo_kunmap(struct ttm_bo_kmap_obj *map)
 	case ttm_bo_map_premapped:
 		break;
 	default:
-		MPASS(0);
+		BUG();
 	}
 	(void) ttm_mem_io_lock(man, false);
 	ttm_mem_io_free(map->bo->bdev, &map->bo->mem);
@@ -591,6 +592,7 @@ void ttm_bo_kunmap(struct ttm_bo_kmap_obj *map)
 	map->page = NULL;
 	map->sf = NULL;
 }
+EXPORT_SYMBOL(ttm_bo_kunmap);
 
 int ttm_bo_move_accel_cleanup(struct ttm_buffer_object *bo,
 			      void *sync_obj,
@@ -606,7 +608,7 @@ int ttm_bo_move_accel_cleanup(struct ttm_buffer_object *bo,
 	struct ttm_buffer_object *ghost_obj;
 	void *tmp_obj = NULL;
 
-	mtx_lock(&bdev->fence_lock);
+	spin_lock(&bdev->fence_lock);
 	if (bo->sync_obj) {
 		tmp_obj = bo->sync_obj;
 		bo->sync_obj = NULL;
@@ -614,7 +616,7 @@ int ttm_bo_move_accel_cleanup(struct ttm_buffer_object *bo,
 	bo->sync_obj = driver->sync_obj_ref(sync_obj);
 	if (evict) {
 		ret = ttm_bo_wait(bo, false, false, false);
-		mtx_unlock(&bdev->fence_lock);
+		spin_unlock(&bdev->fence_lock);
 		if (tmp_obj)
 			driver->sync_obj_unref(&tmp_obj);
 		if (ret)
@@ -637,7 +639,7 @@ int ttm_bo_move_accel_cleanup(struct ttm_buffer_object *bo,
 		 */
 
 		set_bit(TTM_BO_PRIV_FLAG_MOVING, &bo->priv_flags);
-		mtx_unlock(&bdev->fence_lock);
+		spin_unlock(&bdev->fence_lock);
 		if (tmp_obj)
 			driver->sync_obj_unref(&tmp_obj);
 
@@ -665,3 +667,4 @@ int ttm_bo_move_accel_cleanup(struct ttm_buffer_object *bo,
 
 	return 0;
 }
+EXPORT_SYMBOL(ttm_bo_move_accel_cleanup);

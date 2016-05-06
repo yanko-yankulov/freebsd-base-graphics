@@ -34,6 +34,9 @@ __FBSDID("$FreeBSD$");
 #include "radeon_asic.h"
 #include "rs400d.h"
 
+/* CEM: Make sure we got the Linux version */
+CTASSERT(PAGE_MASK != (PAGE_SIZE - 1));
+
 /* This files gather functions specifics to : rs400,rs480 */
 static int rs400_debugfs_pcie_gart_info_init(struct radeon_device *rdev);
 

@@ -48,6 +48,17 @@ struct kobj_type {
 
 extern const struct kobj_type linux_kfree_type;
 
+
+enum kobject_action {
+	KOBJ_ADD,
+	KOBJ_REMOVE,
+	KOBJ_CHANGE,
+	KOBJ_MOVE,
+	KOBJ_ONLINE,
+	KOBJ_OFFLINE,
+	KOBJ_MAX
+};
+
 struct kobject {
 	struct kobject		*parent;
 	char			*name;
@@ -144,5 +155,18 @@ kobject_name(const struct kobject *kobj)
 int	kobject_set_name(struct kobject *kobj, const char *fmt, ...);
 int	kobject_init_and_add(struct kobject *kobj, const struct kobj_type *ktype,
 	    struct kobject *parent, const char *fmt, ...);
+
+static inline void
+kobject_del(struct kobject *kobj)
+{
+	if (!kobj)
+		return;
+	/* list removal? */
+	kobject_put(kobj->parent);
+	kobj->parent = NULL;
+}
+
+static inline void
+kobject_uevent_env(struct kobject *kobj, enum kobject_action action, char *envp_ext[]) {}
 
 #endif /* _LINUX_KOBJECT_H_ */

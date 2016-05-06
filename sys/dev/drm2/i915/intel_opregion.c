@@ -362,7 +362,7 @@ static void intel_didl_outputs(struct drm_device *dev)
 	u32 temp;
 	int i = 0;
 
-	handle = acpi_get_handle(dev->dev);
+	handle = acpi_get_handle(dev->pdev->dev.bsddev);
 	if (!handle)
 		return;
 
@@ -380,7 +380,7 @@ static void intel_didl_outputs(struct drm_device *dev)
 	}
 
 	if (!acpi_video_bus) {
-		device_printf(dev->dev, "No ACPI video bus found\n");
+		pr_warn("No ACPI video bus found\n");
 		return;
 	}
 
@@ -388,7 +388,7 @@ static void intel_didl_outputs(struct drm_device *dev)
 	while (AcpiGetNextObject(ACPI_TYPE_DEVICE, acpi_video_bus, acpi_cdev,
 				&acpi_cdev) != AE_NOT_FOUND) {
 		if (i >= 8) {
-			device_printf(dev->dev, "More than 8 outputs detected\n");
+			dev_printk(KERN_ERR, &dev->pdev->dev, "More than 8 outputs detected\n");
 			return;
 		}
 		status =
@@ -414,7 +414,7 @@ blind_set:
 	list_for_each_entry(connector, &dev->mode_config.connector_list, head) {
 		int output_type = ACPI_OTHER_OUTPUT;
 		if (i >= 8) {
-			device_printf(dev->dev,
+			dev_printk(KERN_ERR, &dev->pdev->dev,
 				    "More than 8 outputs detected\n");
 			return;
 		}
@@ -488,9 +488,7 @@ void intel_opregion_init(struct drm_device *dev)
 		iowrite32(1, &opregion->acpi->drdy);
 
 		system_opregion = opregion;
-#ifdef FREEBSD_WIP
 		register_acpi_notifier(&intel_opregion_notifier);
-#endif /* FREEBSD_WIP */
 	}
 
 	if (opregion->asle)
@@ -509,13 +507,11 @@ void intel_opregion_fini(struct drm_device *dev)
 		iowrite32(0, &opregion->acpi->drdy);
 
 		system_opregion = NULL;
-#ifdef FREEBSD_WIP
 		unregister_acpi_notifier(&intel_opregion_notifier);
-#endif /* FREEBSD_WIP */
 	}
 
 	/* just clear all opregion memory pointers now */
-	pmap_unmapdev((vm_offset_t)opregion->header, OPREGION_SIZE);
+	iounmap(opregion->header);
 	opregion->header = NULL;
 	opregion->acpi = NULL;
 	opregion->swsci = NULL;
@@ -533,14 +529,14 @@ int intel_opregion_setup(struct drm_device *dev)
 	char buf[sizeof(OPREGION_SIGNATURE)];
 	int err = 0;
 
-	pci_read_config_dword(dev->dev, PCI_ASLS, &asls);
+	pci_read_config_dword(dev->pdev, PCI_ASLS, &asls);
 	DRM_DEBUG_DRIVER("graphic opregion physical addr: 0x%x\n", asls);
 	if (asls == 0) {
 		DRM_DEBUG_DRIVER("ACPI OpRegion not supported!\n");
-		return -ENOTSUP;
+		return -ENOTSUPP;
 	}
 
-	base = (void *)pmap_mapbios(asls, OPREGION_SIZE);
+	base = acpi_os_ioremap(asls, OPREGION_SIZE);
 	if (!base)
 		return -ENOMEM;
 
@@ -551,32 +547,29 @@ int intel_opregion_setup(struct drm_device *dev)
 		err = -EINVAL;
 		goto err_out;
 	}
-	opregion->header = (struct opregion_header *)base;
-	opregion->vbt = (char *)base + OPREGION_VBT_OFFSET;
+	opregion->header = base;
+	opregion->vbt = base + OPREGION_VBT_OFFSET;
 
-	opregion->lid_state = (u32 *)((char *)base + ACPI_CLID);
+	opregion->lid_state = base + ACPI_CLID;
 
-	mboxes = opregion->header->mboxes;
+	mboxes = ioread32(&opregion->header->mboxes);
 	if (mboxes & MBOX_ACPI) {
 		DRM_DEBUG_DRIVER("Public ACPI methods supported\n");
-		opregion->acpi = (struct opregion_acpi *)((char *)base +
-		    OPREGION_ACPI_OFFSET);
+		opregion->acpi = base + OPREGION_ACPI_OFFSET;
 	}
 
 	if (mboxes & MBOX_SWSCI) {
 		DRM_DEBUG_DRIVER("SWSCI supported\n");
-		opregion->swsci = (struct opregion_swsci *)((char *)base +
-		    OPREGION_SWSCI_OFFSET);
+		opregion->swsci = base + OPREGION_SWSCI_OFFSET;
 	}
 	if (mboxes & MBOX_ASLE) {
 		DRM_DEBUG_DRIVER("ASLE supported\n");
-		opregion->asle = (struct opregion_asle *)((char *)base +
-		    OPREGION_ASLE_OFFSET);
+		opregion->asle = base + OPREGION_ASLE_OFFSET;
 	}
 
 	return 0;
 
 err_out:
-	pmap_unmapdev((vm_offset_t)base, OPREGION_SIZE);
+	iounmap(base);
 	return err;
 }

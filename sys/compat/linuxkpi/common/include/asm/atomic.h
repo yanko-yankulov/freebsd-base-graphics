@@ -38,7 +38,7 @@
 #define	ATOMIC_INIT(x)	{ .counter = (x) }
 
 typedef struct {
-	volatile int counter;
+	volatile u_int counter;
 } atomic_t;
 
 /*------------------------------------------------------------------------*
@@ -73,6 +73,14 @@ atomic_set(atomic_t *v, int i)
 {
 	atomic_store_rel_int(&v->counter, i);
 }
+
+
+static inline void
+atomic_set_mask(int mask, atomic_t *v)
+{
+	atomic_set_int(&v->counter, mask);
+}
+
 
 static inline int
 atomic_read(atomic_t *v)
@@ -121,4 +129,6 @@ atomic_xchg(atomic_t *v, int i)
 	return (atomic_swap_int(&v->counter, i));
 }
 
+#define	cmpxchg(ptr, old, new) \
+    (atomic_cmpset_int((volatile u_int *)(ptr),(old),(new)) ? (old) : (0))
 #endif					/* _ASM_ATOMIC_H_ */

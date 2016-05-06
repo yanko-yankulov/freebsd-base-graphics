@@ -1,5 +1,6 @@
 /*-
  * Copyright (c) 2015-2016 Mellanox Technologies, Ltd.
+ * Copyright (c) 2016 Matthew Macy
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -56,6 +57,10 @@ __FBSDID("$FreeBSD$");
 #include <linux/io.h>
 #include <linux/vmalloc.h>
 #include <linux/pci.h>
+#include <linux/ioport.h>
+
+/* assumes !e820 */
+unsigned long pci_mem_start;
 
 static device_probe_t linux_pci_probe;
 static device_attach_t linux_pci_attach;
@@ -105,10 +110,14 @@ linux_pci_probe(device_t dev)
 	const struct pci_device_id *id;
 	struct pci_driver *pdrv;
 
-	if ((pdrv = linux_pci_find(dev, &id)) == NULL)
+	if ((pdrv = linux_pci_find(dev, &id)) == NULL) {
+		printf("linux_pci_find failed!\n");
 		return (ENXIO);
-	if (device_get_driver(dev) != &pdrv->driver)
+	}
+	if (device_get_driver(dev) != &pdrv->driver) {
+		printf("device_get_driver failed!\n");
 		return (ENXIO);
+	}
 	device_set_desc(dev, pdrv->name);
 	return (0);
 }
@@ -120,8 +129,14 @@ linux_pci_attach(device_t dev)
 	struct pci_dev *pdev;
 	struct pci_driver *pdrv;
 	const struct pci_device_id *id;
+	devclass_t dc;
+	device_t parent;
 	int error;
 
+	parent = device_get_parent(dev);
+	dc = device_get_devclass(parent);
+	if (strcmp(devclass_get_name(dc), "pci") != 0)
+		device_set_ivars(dev, device_get_ivars(parent));
 	pdrv = linux_pci_find(dev, &id);
 	pdev = device_get_softc(dev);
 	pdev->dev.parent = &linux_root_device;
@@ -130,6 +145,9 @@ linux_pci_attach(device_t dev)
 	pdev->device = id->device;
 	pdev->vendor = id->vendor;
 	pdev->dev.dma_mask = &pdev->dma_mask;
+	/* XXX how do we check this ? assume true */
+	pdev->msix_enabled = 1;
+	pdev->msi_enabled = 1;
 	pdev->pdrv = pdrv;
 	kobject_init(&pdev->dev.kobj, &linux_dev_ktype);
 	kobject_set_name(&pdev->dev.kobj, device_get_nameunit(dev));
@@ -152,6 +170,7 @@ linux_pci_attach(device_t dev)
 		list_del(&pdev->links);
 		spin_unlock(&pci_lock);
 		put_device(&pdev->dev);
+		printf("linux_pci_attach failed! %d", error);
 		return (-error);
 	}
 	return (0);
@@ -223,7 +242,10 @@ pci_register_driver(struct pci_driver *pdrv)
 	devclass_t bus;
 	int error = 0;
 
-	bus = devclass_find("pci");
+	if (pdrv->busname != NULL)
+		bus = devclass_create(pdrv->busname);
+	else
+		bus = devclass_find("pci");
 
 	spin_lock(&pci_lock);
 	list_add(&pdrv->links, &pci_drivers);
@@ -234,7 +256,7 @@ pci_register_driver(struct pci_driver *pdrv)
 	mtx_lock(&Giant);
 	if (bus != NULL) {
 		error = devclass_add_driver(bus, &pdrv->driver, BUS_PASS_DEFAULT,
-		    &pdrv->bsdclass);
+		    pdrv->bsdclass);
 	}
 	mtx_unlock(&Giant);
 	return (-error);
@@ -254,3 +276,154 @@ pci_unregister_driver(struct pci_driver *pdrv)
 	mtx_unlock(&Giant);
 }
 
+void *
+pci_iomap(struct pci_dev *pdev, int bar, unsigned long max)
+{
+	struct resource *res;
+	int rid, len;
+	void *regs;
+
+	if (pdev->pcir.r[bar] == NULL) {
+		rid = PCIR_BAR(bar);
+		if ((res = bus_alloc_resource_any(pdev->dev.bsddev, SYS_RES_MEMORY,
+						  &rid, RF_ACTIVE)) == NULL)
+			return (NULL);
+		pdev->pcir.r[bar] = res;
+		pdev->pcir.rid[bar] = rid;
+	} 
+	regs = (void *)rman_get_bushandle(pdev->pcir.r[bar]);
+	len = rman_get_end(pdev->pcir.r[bar])  - rman_get_start(pdev->pcir.r[bar]);
+	/* XXX if NULL ? */
+	pmap_change_attr((vm_offset_t)regs, len >> PAGE_SHIFT, PAT_UNCACHED);
+	pdev->pcir.map[bar] = regs;
+	return (regs);
+}
+
+
+void
+pci_iounmap(struct pci_dev *pdev, void *regs)
+{
+	int bar, rid;
+	struct resource *res;
+
+	res = NULL;
+	for (bar = 0; bar <= LINUXKPI_MAX_PCI_RESOURCE; bar++) {
+		if (pdev->pcir.map[bar] != regs)
+			continue;
+		res = pdev->pcir.r[bar];
+		rid = pdev->pcir.rid[bar];
+	}
+
+	if (res == NULL)
+		return;
+
+	bus_release_resource(pdev->dev.bsddev, SYS_RES_MEMORY, rid, res);
+}
+
+
+struct pci_dev *
+pci_get_bus_and_slot(unsigned int bus, unsigned int devfn)
+{
+	device_t dev;
+	struct pci_dev *pdev;
+	struct pci_bus *pbus;
+
+	dev = pci_find_bsf(bus, devfn >> 16, devfn & 0xffff);
+	if (dev == NULL)
+		return (NULL);
+
+	pdev = malloc(sizeof(*pdev), M_DEVBUF, M_WAITOK|M_ZERO);
+	pdev->devfn = devfn;
+	pdev->dev.bsddev = dev;
+	pbus = malloc(sizeof(*pbus), M_DEVBUF, M_WAITOK|M_ZERO);
+	pbus->self = pdev;
+	pdev->bus = pbus;
+	return (pdev);
+}
+
+void
+pci_dev_put(struct pci_dev *pdev)
+{
+	MPASS(pdev->bus);
+	MPASS(pdev->bus->self == pdev);
+	free(pdev->bus, M_DEVBUF);
+	free(pdev, M_DEVBUF);
+}
+
+resource_size_t
+pcibios_align_resource(void *data, const struct linux_resource *res,
+		       resource_size_t size __unused, resource_size_t align __unused)
+{
+	resource_size_t start = res->start;
+	/* ignore IO resources */
+
+	return (start);
+}
+
+int __must_check
+pci_bus_alloc_resource(struct pci_bus *bus,
+			struct linux_resource *res, resource_size_t size,
+			resource_size_t align, resource_size_t min,
+			unsigned int type_mask,
+			resource_size_t (*alignf)(void *,
+						  const struct linux_resource *,
+						  resource_size_t,
+						  resource_size_t),
+					void *alignf_data)
+{
+	struct pci_devinfo *dinfo;
+	struct resource_list *rl;
+	device_t dev;
+	struct resource *r;
+	struct resource_list_entry *rle;
+	int type, flags;
+
+	/* XXX initialize bus */
+	dev = bus->self->dev.bsddev;
+	dinfo = device_get_ivars(bus->self->dev.bsddev);
+	rl = &dinfo->resources;
+
+	/* transform flags to BSD XXX */
+	flags = res->flags;
+	/*assuming memory not I/O or intr*/
+	type = SYS_RES_MEMORY;
+
+	res->bsddev = dev;
+	STAILQ_FOREACH(rle, rl, link) {
+		if (rle->type != type)
+			continue;
+		if ((flags ^ rle->flags) & type_mask)
+			continue;
+		if (rle->start < min)
+			continue;
+		if (rle->end - rle->start < size)
+			continue;
+		/* XXX check against PREFETCH */
+		res->rid = rle->rid;
+		res->start = rle->start;
+		res->end = rle->end;
+		r = bus_alloc_resource_any(dev, SYS_RES_MEMORY, &res->rid, RF_SHAREABLE);
+		if (r)
+			break;
+	}
+	if (r == NULL)
+		return (-ENOMEM);
+
+	res->r = r;
+	return (0);
+}
+
+int
+release_resource(struct linux_resource *lr)
+{
+	int rc;
+
+	rc = bus_release_resource(lr->bsddev, SYS_RES_MEMORY, lr->rid, lr->r);
+	lr->bsddev = NULL;
+	lr->r = NULL;
+	lr->rid = -1;
+	if (rc)
+		return (-EINVAL);
+
+	return (0);
+}

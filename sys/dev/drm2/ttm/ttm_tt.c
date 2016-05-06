@@ -51,16 +51,14 @@ MALLOC_DEFINE(M_TTM_PD, "ttm_pd", "TTM Page Directories");
  */
 static void ttm_tt_alloc_page_directory(struct ttm_tt *ttm)
 {
-	ttm->pages = malloc(ttm->num_pages * sizeof(void *),
-	    M_TTM_PD, M_WAITOK | M_ZERO);
+	ttm->pages = drm_calloc_large(ttm->num_pages, sizeof(void*));
 }
 
 static void ttm_dma_tt_alloc_page_directory(struct ttm_dma_tt *ttm)
 {
-	ttm->ttm.pages = malloc(ttm->ttm.num_pages * sizeof(void *),
-	    M_TTM_PD, M_WAITOK | M_ZERO);
-	ttm->dma_address = malloc(ttm->ttm.num_pages *
-	    sizeof(*ttm->dma_address), M_TTM_PD, M_WAITOK);
+	ttm->ttm.pages = drm_calloc_large(ttm->ttm.num_pages, sizeof(void*));
+	ttm->dma_address = drm_calloc_large(ttm->ttm.num_pages,
+					    sizeof(*ttm->dma_address));
 }
 
 #if defined(__i386__) || defined(__amd64__)
@@ -158,6 +156,7 @@ int ttm_tt_set_placement_caching(struct ttm_tt *ttm, uint32_t placement)
 
 	return ttm_tt_set_caching(ttm, state);
 }
+EXPORT_SYMBOL(ttm_tt_set_placement_caching);
 
 void ttm_tt_destroy(struct ttm_tt *ttm)
 {
@@ -196,17 +195,19 @@ int ttm_tt_init(struct ttm_tt *ttm, struct ttm_bo_device *bdev,
 	ttm_tt_alloc_page_directory(ttm);
 	if (!ttm->pages) {
 		ttm_tt_destroy(ttm);
-		printf("Failed allocating page table\n");
+		pr_err("Failed allocating page table\n");
 		return -ENOMEM;
 	}
 	return 0;
 }
+EXPORT_SYMBOL(ttm_tt_init);
 
 void ttm_tt_fini(struct ttm_tt *ttm)
 {
-	free(ttm->pages, M_TTM_PD);
+	drm_free_large(ttm->pages);
 	ttm->pages = NULL;
 }
+EXPORT_SYMBOL(ttm_tt_fini);
 
 int ttm_dma_tt_init(struct ttm_dma_tt *ttm_dma, struct ttm_bo_device *bdev,
 		unsigned long size, uint32_t page_flags,
@@ -227,21 +228,23 @@ int ttm_dma_tt_init(struct ttm_dma_tt *ttm_dma, struct ttm_bo_device *bdev,
 	ttm_dma_tt_alloc_page_directory(ttm_dma);
 	if (!ttm->pages || !ttm_dma->dma_address) {
 		ttm_tt_destroy(ttm);
-		printf("Failed allocating page table\n");
+		pr_err("Failed allocating page table\n");
 		return -ENOMEM;
 	}
 	return 0;
 }
+EXPORT_SYMBOL(ttm_dma_tt_init);
 
 void ttm_dma_tt_fini(struct ttm_dma_tt *ttm_dma)
 {
 	struct ttm_tt *ttm = &ttm_dma->ttm;
 
-	free(ttm->pages, M_TTM_PD);
+	drm_free_large(ttm->pages);
 	ttm->pages = NULL;
-	free(ttm_dma->dma_address, M_TTM_PD);
+	drm_free_large(ttm_dma->dma_address);
 	ttm_dma->dma_address = NULL;
 }
+EXPORT_SYMBOL(ttm_dma_tt_fini);
 
 void ttm_tt_unbind(struct ttm_tt *ttm)
 {
@@ -249,7 +252,7 @@ void ttm_tt_unbind(struct ttm_tt *ttm)
 
 	if (ttm->state == tt_bound) {
 		ret = ttm->func->unbind(ttm);
-		MPASS(ret == 0);
+		BUG_ON(ret);
 		ttm->state = tt_unbound;
 	}
 }
@@ -276,6 +279,7 @@ int ttm_tt_bind(struct ttm_tt *ttm, struct ttm_mem_reg *bo_mem)
 
 	return 0;
 }
+EXPORT_SYMBOL(ttm_tt_bind);
 
 int ttm_tt_swapin(struct ttm_tt *ttm)
 {
@@ -332,8 +336,8 @@ int ttm_tt_swapout(struct ttm_tt *ttm, vm_object_t persistent_swap_storage)
 	vm_page_t from_page, to_page;
 	int i;
 
-	MPASS(ttm->state == tt_unbound || ttm->state == tt_unpopulated);
-	MPASS(ttm->caching_state == tt_cached);
+	BUG_ON(ttm->state != tt_unbound && ttm->state != tt_unpopulated);
+	BUG_ON(ttm->caching_state != tt_cached);
 
 	if (persistent_swap_storage == NULL) {
 		obj = vm_pager_allocate(OBJT_SWAP, NULL,

@@ -235,7 +235,7 @@ parse_lfp_panel_data(struct drm_i915_private *dev_priv,
 					       lvds_lfp_data_ptrs,
 					       lvds_options->panel_type);
 
-	panel_fixed_mode = malloc(sizeof(*panel_fixed_mode), DRM_MEM_KMS, M_WAITOK | M_ZERO);
+	panel_fixed_mode = kzalloc(sizeof(*panel_fixed_mode), GFP_KERNEL);
 	if (!panel_fixed_mode)
 		return;
 
@@ -313,7 +313,7 @@ parse_sdvo_panel_data(struct drm_i915_private *dev_priv,
 	if (!dvo_timing)
 		return;
 
-	panel_fixed_mode = malloc(sizeof(*panel_fixed_mode), DRM_MEM_KMS, M_WAITOK | M_ZERO);
+	panel_fixed_mode = kzalloc(sizeof(*panel_fixed_mode), GFP_KERNEL);
 	if (!panel_fixed_mode)
 		return;
 
@@ -614,7 +614,7 @@ parse_device_mapping(struct drm_i915_private *dev_priv,
 		DRM_DEBUG_KMS("no child dev is parsed from VBT\n");
 		return;
 	}
-	dev_priv->child_dev = malloc(count * sizeof(*p_child), DRM_MEM_KMS, M_WAITOK | M_ZERO);
+	dev_priv->child_dev = kcalloc(count, sizeof(*p_child), GFP_KERNEL);
 	if (!dev_priv->child_dev) {
 		DRM_DEBUG_KMS("No memory space for child device\n");
 		return;
@@ -693,7 +693,7 @@ int
 intel_parse_bios(struct drm_device *dev)
 {
 	struct drm_i915_private *dev_priv = dev->dev_private;
-	device_t vga_dev = device_get_parent(dev->dev);;
+	device_t vga_dev = dev->pdev->dev.bsddev;
 	struct bdb_header *bdb = NULL;
 	u8 __iomem *bios = NULL;
 
@@ -762,9 +762,9 @@ intel_free_parsed_bios_data(struct drm_device *dev)
 {
 	struct drm_i915_private *dev_priv = dev->dev_private;
 
-	free(dev_priv->lfp_lvds_vbt_mode, DRM_MEM_KMS);
-	free(dev_priv->sdvo_lvds_vbt_mode, DRM_MEM_KMS);
-	free(dev_priv->child_dev, DRM_MEM_KMS);
+	kfree(dev_priv->lfp_lvds_vbt_mode);
+	kfree(dev_priv->sdvo_lvds_vbt_mode);
+	kfree(dev_priv->child_dev);
 
 	dev_priv->lfp_lvds_vbt_mode = NULL;
 	dev_priv->sdvo_lvds_vbt_mode = NULL;

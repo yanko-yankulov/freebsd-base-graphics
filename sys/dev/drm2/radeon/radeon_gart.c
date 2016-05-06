@@ -34,6 +34,9 @@ __FBSDID("$FreeBSD$");
 #include "radeon.h"
 #include "radeon_reg.h"
 
+/* CEM: Make sure we got the Linux version */
+CTASSERT(PAGE_MASK != (PAGE_SIZE - 1));
+
 /*
  * GART
  * The GART (Graphics Aperture Remapping Table) is an aperture

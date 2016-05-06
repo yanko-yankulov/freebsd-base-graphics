@@ -43,6 +43,7 @@
 #include <sys/syslog.h>
 
 #include <linux/bitops.h>
+#include <linux/bug.h>
 #include <linux/compiler.h>
 #include <linux/errno.h>
 #include <linux/kthread.h>
@@ -51,6 +52,8 @@
 #include <linux/wait.h>
 #include <linux/log2.h> 
 #include <asm/byteorder.h>
+
+#include <machine/stdarg.h>
 
 #define KERN_CONT       ""
 #define	KERN_EMERG	"<0>"
@@ -62,12 +65,8 @@
 #define	KERN_INFO	"<6>"
 #define	KERN_DEBUG	"<7>"
 
-#define	BUILD_BUG_ON(x)		CTASSERT(!(x))
-
 #define BUG()			panic("BUG")
 #define	BUG_ON(cond)		KASSERT(!(cond), ("BUG ON: " #cond " -> 0x%jx", (uintmax_t)(cond)))
-#define	WARN_ON(cond)		WARN(cond, "WARN ON: " #cond)
-#define	WARN_ON_SMP(cond)	WARN_ON(cond)
 
 #undef	ALIGN
 #define	ALIGN(x, y)		roundup2((x), (y))
@@ -78,6 +77,14 @@
 #define	FIELD_SIZEOF(t, f)	sizeof(((t *)0)->f)
 
 #define	printk(X...)		printf(X)
+#define	vprintk(f, a)		vprintf(f, a)
+
+
+struct va_format {
+	const char *fmt;
+	va_list *va;
+};
+
 
 /*
  * The "pr_debug()" and "pr_devel()" macros should produce zero code

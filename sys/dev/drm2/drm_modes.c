@@ -35,6 +35,7 @@ __FBSDID("$FreeBSD$");
 
 #include <drm/drmP.h>
 #include <dev/drm2/drm_crtc.h>
+#include <linux/list.h>
 
 /**
  * drm_mode_debug_printmodeline - debug print a mode
@@ -927,11 +928,6 @@ static int drm_mode_compare(void *priv, struct list_head *lh_a, struct list_head
 	diff = b->hdisplay * b->vdisplay - a->hdisplay * a->vdisplay;
 	if (diff)
 		return diff;
-
-	diff = b->vrefresh - a->vrefresh;
-	if (diff)
-		return diff;
-
 	diff = b->clock - a->clock;
 	return diff;
 }
@@ -947,7 +943,7 @@ static int drm_mode_compare(void *priv, struct list_head *lh_a, struct list_head
  */
 void drm_mode_sort(struct list_head *mode_list)
 {
-	drm_list_sort(NULL, mode_list, drm_mode_compare);
+	list_sort(NULL, mode_list, drm_mode_compare);
 }
 EXPORT_SYMBOL(drm_mode_sort);
 
@@ -1124,7 +1120,7 @@ bool drm_mode_parse_command_line_for_connector(const char *mode_option,
 	}
 done:
 	if (i >= 0) {
-		DRM_WARNING(
+		printk(KERN_WARNING
 			"parse error at position %i in video mode '%s'\n",
 			i, name);
 		mode->specified = false;

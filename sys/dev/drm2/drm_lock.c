@@ -37,6 +37,7 @@
 __FBSDID("$FreeBSD$");
 
 #include <drm/drmP.h>
+#include <linux/spinlock.h>
 
 #if defined(__linux__)
 static int drm_notifier(void *priv);
@@ -57,6 +58,7 @@ static int drm_lock_take(struct drm_lock_data *lock_data, unsigned int context);
  */
 int drm_lock(struct drm_device *dev, void *data, struct drm_file *file_priv)
 {
+	DECLARE_WAITQUEUE(entry, current);
 	struct drm_lock *lock = data;
 	struct drm_master *master = file_priv->master;
 	int ret = 0;
@@ -68,24 +70,22 @@ int drm_lock(struct drm_device *dev, void *data, struct drm_file *file_priv)
 			  DRM_CURRENTPID, lock->context);
 		return -EINVAL;
 	}
-
+#if defined(__linux__)
 	DRM_DEBUG("%d (pid %d) requests lock (0x%08x), flags = 0x%08x\n",
 		  lock->context, DRM_CURRENTPID,
 		  master->lock.hw_lock->lock, lock->flags);
-
-	mtx_lock(&master->lock.spinlock);
+	add_wait_queue(&master->lock.lock_queue, &entry);
+	spin_lock_bh(&master->lock.spinlock);
 	master->lock.user_waiters++;
-	mtx_unlock(&master->lock.spinlock);
+	spin_unlock_bh(&master->lock.spinlock);
 
 	for (;;) {
-#if defined(__linux__)
 		if (!master->lock.hw_lock) {
 			/* Device has been unregistered */
 			send_sig(SIGTERM, current, 0);
 			ret = -EINTR;
 			break;
 		}
-#endif
 		if (drm_lock_take(&master->lock, lock->context)) {
 			master->lock.file_priv = file_priv;
 			master->lock.lock_time = jiffies;
@@ -94,23 +94,24 @@ int drm_lock(struct drm_device *dev, void *data, struct drm_file *file_priv)
 		}
 
 		/* Contention */
-		DRM_UNLOCK_ASSERT(dev);
-		ret = -sx_sleep(&master->lock.lock_queue, &drm_global_mutex,
-		    PCATCH, "drmlk2", 0);
-		if (ret == -ERESTART)
-			ret = -ERESTARTSYS;
-		if (ret != 0)
+		mutex_unlock(&drm_global_mutex);
+		schedule();
+		mutex_lock(&drm_global_mutex);
+		/* XXX do we need to do more ? */
+		if (SIGPENDING(curthread)) {
+			ret = -EINTR;
 			break;
+		}
 	}
-	mtx_lock(&master->lock.spinlock);
+	spin_lock_bh(&master->lock.spinlock);
 	master->lock.user_waiters--;
-	mtx_unlock(&master->lock.spinlock);
+	spin_unlock_bh(&master->lock.spinlock);
+	remove_wait_queue(&master->lock.lock_queue, &entry);
 
 	DRM_DEBUG("%d %s\n", lock->context,
 		  ret ? "interrupted" : "has lock");
 	if (ret) return ret;
 
-#if defined(__linux__)
 	/* don't set the block all signals on the master process for now 
 	 * really probably not the correct answer but lets us debug xkb
  	 * xserver for now */
@@ -124,6 +125,28 @@ int drm_lock(struct drm_device *dev, void *data, struct drm_file *file_priv)
 		dev->sigdata.lock = master->lock.hw_lock;
 		block_all_signals(drm_notifier, &dev->sigdata, &dev->sigmask);
 	}
+#else
+	spin_lock_bh(&master->lock.spinlock);
+	master->lock.user_waiters++;
+	spin_unlock_bh(&master->lock.spinlock);
+	for (;;) {
+		if (drm_lock_take(&master->lock, lock->context)) {
+			master->lock.file_priv = file_priv;
+			master->lock.lock_time = jiffies;
+			atomic_inc(&dev->counts[_DRM_STAT_LOCKS]);
+			break;	/* Got lock */
+		}
+		ret = -sx_sleep(&master->lock.lock_queue, &drm_global_mutex.sx,
+		    PCATCH, "drmlk2", 0);
+		if (ret == -ERESTART)
+			ret = -ERESTARTSYS;
+		if (ret != 0)
+			break;
+	}
+
+	spin_lock_bh(&master->lock.spinlock);
+	master->lock.user_waiters--;
+	spin_unlock_bh(&master->lock.spinlock);
 #endif
 
 	if (dev->driver->dma_quiescent && (lock->flags & _DRM_LOCK_QUIESCENT))
@@ -188,7 +211,7 @@ int drm_lock_take(struct drm_lock_data *lock_data,
 	unsigned int old, new, prev;
 	volatile unsigned int *lock = &lock_data->hw_lock->lock;
 
-	mtx_lock(&lock_data->spinlock);
+	spin_lock_bh(&lock_data->spinlock);
 	do {
 		old = *lock;
 		if (old & _DRM_LOCK_HELD)
@@ -200,7 +223,7 @@ int drm_lock_take(struct drm_lock_data *lock_data,
 		}
 		prev = cmpxchg(lock, old, new);
 	} while (prev != old);
-	mtx_unlock(&lock_data->spinlock);
+	spin_unlock_bh(&lock_data->spinlock);
 
 	if (_DRM_LOCKING_CONTEXT(old) == context) {
 		if (old & _DRM_LOCK_HELD) {
@@ -262,14 +285,14 @@ int drm_lock_free(struct drm_lock_data *lock_data, unsigned int context)
 	unsigned int old, new, prev;
 	volatile unsigned int *lock = &lock_data->hw_lock->lock;
 
-	mtx_lock(&lock_data->spinlock);
+	spin_lock_bh(&lock_data->spinlock);
 	if (lock_data->kernel_waiters != 0) {
 		drm_lock_transfer(lock_data, 0);
 		lock_data->idle_has_lock = 1;
-		mtx_unlock(&lock_data->spinlock);
+		spin_unlock_bh(&lock_data->spinlock);
 		return 1;
 	}
-	mtx_unlock(&lock_data->spinlock);
+	spin_unlock_bh(&lock_data->spinlock);
 
 	do {
 		old = *lock;
@@ -336,18 +359,18 @@ void drm_idlelock_take(struct drm_lock_data *lock_data)
 {
 	int ret;
 
-	mtx_lock(&lock_data->spinlock);
+	spin_lock_bh(&lock_data->spinlock);
 	lock_data->kernel_waiters++;
 	if (!lock_data->idle_has_lock) {
 
-		mtx_unlock(&lock_data->spinlock);
+		spin_unlock_bh(&lock_data->spinlock);
 		ret = drm_lock_take(lock_data, DRM_KERNEL_CONTEXT);
-		mtx_lock(&lock_data->spinlock);
+		spin_lock_bh(&lock_data->spinlock);
 
 		if (ret == 1)
 			lock_data->idle_has_lock = 1;
 	}
-	mtx_unlock(&lock_data->spinlock);
+	spin_unlock_bh(&lock_data->spinlock);
 }
 EXPORT_SYMBOL(drm_idlelock_take);
 
@@ -356,7 +379,7 @@ void drm_idlelock_release(struct drm_lock_data *lock_data)
 	unsigned int old, prev;
 	volatile unsigned int *lock = &lock_data->hw_lock->lock;
 
-	mtx_lock(&lock_data->spinlock);
+	spin_lock_bh(&lock_data->spinlock);
 	if (--lock_data->kernel_waiters == 0) {
 		if (lock_data->idle_has_lock) {
 			do {
@@ -367,7 +390,7 @@ void drm_idlelock_release(struct drm_lock_data *lock_data)
 			lock_data->idle_has_lock = 0;
 		}
 	}
-	mtx_unlock(&lock_data->spinlock);
+	spin_unlock_bh(&lock_data->spinlock);
 }
 EXPORT_SYMBOL(drm_idlelock_release);
 

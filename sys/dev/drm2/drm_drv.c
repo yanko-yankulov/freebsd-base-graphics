@@ -54,8 +54,12 @@ __FBSDID("$FreeBSD$");
 #include <drm/drmP.h>
 #include <dev/drm2/drm_core.h>
 #include <dev/drm2/drm_global.h>
+#include <dev/drm2/linux_fb.h>
 
-struct sx drm_global_mutex;
+
+
+struct mutex drm_global_mutex;
+
 
 /** Ioctl table */
 static struct drm_ioctl_desc drm_ioctls[] = {
@@ -198,7 +202,7 @@ int drm_lastclose(struct drm_device * dev)
 	if (dev->irq_enabled && !drm_core_check_feature(dev, DRIVER_MODESET))
 		drm_irq_uninstall(dev);
 
-	DRM_LOCK(dev);
+	mutex_lock(&dev->struct_mutex);
 
 	/* Clear AGP information */
 	if (drm_core_has_AGP(dev) && dev->agp &&
@@ -239,7 +243,7 @@ int drm_lastclose(struct drm_device * dev)
 	    !drm_core_check_feature(dev, DRIVER_MODESET))
 		drm_dma_takedown(dev);
 
-	DRM_UNLOCK(dev);
+	mutex_unlock(&dev->struct_mutex);
 
 	DRM_DEBUG("lastclose completed\n");
 	return 0;
@@ -256,10 +260,20 @@ static const struct file_operations drm_stub_fops = {
 
 static int __init drm_core_init(void)
 {
+	int ret;
 
-	sx_init(&drm_global_mutex, "drm_global_mutex");
+	mutex_init(&drm_global_mutex);
 
 	drm_global_init();
+	idr_init(&drm_minors_idr);
+
+	drm_class = drm_sysfs_create(THIS_MODULE, "drm");
+	if (IS_ERR(drm_class)) {
+		printk(KERN_ERR "DRM: Error creating drm class.\n");
+		ret = PTR_ERR(drm_class);
+		goto err_p2;
+	}
+
 
 #if DRM_LINUX
 	linux_ioctl_register_handler(&drm_handler);
@@ -268,6 +282,10 @@ static int __init drm_core_init(void)
 	DRM_INFO("Initialized %s %d.%d.%d %s\n",
 		 CORE_NAME, CORE_MAJOR, CORE_MINOR, CORE_PATCHLEVEL, CORE_DATE);
 	return 0;
+err_p2:
+	idr_destroy(&drm_minors_idr);
+
+	return ret;
 }
 
 static void __exit drm_core_exit(void)
@@ -279,7 +297,9 @@ static void __exit drm_core_exit(void)
 
 	drm_global_release();
 
-	sx_destroy(&drm_global_mutex);
+	mutex_destroy(&drm_global_mutex);
+	idr_destroy(&drm_minors_idr);
+	linux_fb_destroy();
 }
 
 SYSINIT(drm_register, SI_SUB_KLD, SI_ORDER_MIDDLE,
@@ -466,9 +486,9 @@ int drm_ioctl(struct cdev *kdev, u_long cmd, caddr_t data, int flags,
 		if (ioctl->flags & DRM_UNLOCKED)
 			retcode = func(dev, data, file_priv);
 		else {
-			sx_xlock(&drm_global_mutex);
+			mutex_lock(&drm_global_mutex);
 			retcode = func(dev, data, file_priv);
-			sx_xunlock(&drm_global_mutex);
+			mutex_unlock(&drm_global_mutex);
 		}
 	}
 

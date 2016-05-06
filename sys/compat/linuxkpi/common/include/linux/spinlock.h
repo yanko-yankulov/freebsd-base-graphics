@@ -63,8 +63,34 @@ spin_lock_init(spinlock_t *lock)
 	mtx_init(&lock->m, "lnxspin", NULL, MTX_DEF | MTX_NOWITNESS);
 }
 
+static inline void
+spin_lock_destroy(spinlock_t *lock)
+{
+	mtx_destroy(&lock->m);
+}
+
+
 #define	DEFINE_SPINLOCK(lock)						\
 	spinlock_t lock;						\
 	MTX_SYSINIT(lock, &(lock).m, "lnxspin", MTX_DEF)
+
+
+static inline void
+assert_spin_locked(spinlock_t *lock)
+{
+	mtx_assert(&lock->m, MA_OWNED);
+}
+
+static inline void spin_lock_bh(spinlock_t *lock) {
+	critical_enter();
+	spin_lock(lock);
+}
+static inline void spin_unlock_bh(spinlock_t *lock) {
+	spin_unlock(lock);
+	critical_exit();
+}
+
+#define local_irq_save(flags) (flags = 1)
+#define local_irq_restore(flags) (flags = 0)
 
 #endif	/* _LINUX_SPINLOCK_H_ */

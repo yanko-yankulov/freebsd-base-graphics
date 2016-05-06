@@ -539,3 +539,41 @@ idr_alloc_cyclic(struct idr *idr, void *ptr, int start, int end, gfp_t gfp_mask)
 	mtx_unlock(&idr->lock);
 	return (retval);
 }
+
+static int
+idr_for_each_layer(struct idr_layer *il, int layer,
+		   int (*f)(int id, void *p, void *data), void *data)
+{
+	int i, err;
+
+	if (il == NULL)
+		return (0);
+	if (layer == 0) {
+		for (i = 0; i < IDR_SIZE; i++) {
+			if (il->ary[i]) {
+				err = f(i, il->ary[i],  data);
+				if (err)
+					return (err);
+			}
+		}
+		return (0);
+	}
+	for (i = 0; i < IDR_SIZE; i++)
+		if (il->ary[i]) {
+			err = idr_for_each_layer(il->ary[i], layer - 1, f, data);
+			if (err)
+				return (err);
+		}
+	return (0);
+}
+
+int
+idr_for_each(struct idr *idp, int (*f)(int id, void *p, void *data), void *data)
+{
+	int err;
+
+	mtx_lock(&idp->lock);
+	err = idr_for_each_layer(idp->top, idp->layers - 1, f, data);
+	mtx_unlock(&idp->lock);
+	return (err);
+}

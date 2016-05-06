@@ -101,11 +101,23 @@ set_page_dirty(struct vm_page *page)
 {
 	vm_page_dirty(page);
 }
+static inline void
+mark_page_accessed(struct vm_page *page)
+{
+	vm_page_reference(page);
+}
+
 
 static inline void
 get_page(struct vm_page *page)
 {
+	vm_page_lock(page);
 	vm_page_hold(page);
+	vm_page_unlock(page);
 }
+
+
+
+#define put_page(page) __free_hot_cold_page(page);
 
 #endif	/* _LINUX_MM_H_ */

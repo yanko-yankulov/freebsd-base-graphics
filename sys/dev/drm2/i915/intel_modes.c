@@ -30,7 +30,6 @@ __FBSDID("$FreeBSD$");
 #include <dev/drm2/drm_edid.h>
 #include <dev/drm2/i915/intel_drv.h>
 #include <dev/drm2/i915/i915_drv.h>
-#include <dev/iicbus/iiconf.h>
 
 /**
  * intel_connector_update_modes - update connector from edid
@@ -57,7 +56,7 @@ int intel_connector_update_modes(struct drm_connector *connector,
  * Fetch the EDID information from @connector using the DDC bus.
  */
 int intel_ddc_get_modes(struct drm_connector *connector,
-			device_t adapter)
+			struct i2c_adapter *adapter)
 {
 	struct edid *edid;
 	int ret;
@@ -67,7 +66,7 @@ int intel_ddc_get_modes(struct drm_connector *connector,
 		return 0;
 
 	ret = intel_connector_update_modes(connector, edid);
-	free(edid, DRM_MEM_KMS);
+	kfree(edid);
 
 	return ret;
 }
@@ -101,8 +100,9 @@ intel_attach_force_audio_property(struct drm_connector *connector)
 }
 
 static const struct drm_prop_enum_list broadcast_rgb_names[] = {
-	{ 0, "Full" },
-	{ 1, "Limited 16:235" },
+	{ INTEL_BROADCAST_RGB_AUTO, "Automatic" },
+	{ INTEL_BROADCAST_RGB_FULL, "Full" },
+	{ INTEL_BROADCAST_RGB_LIMITED, "Limited 16:235" },
 };
 
 void

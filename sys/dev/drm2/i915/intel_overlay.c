@@ -198,9 +198,8 @@ intel_overlay_map_regs(struct intel_overlay *overlay)
 	if (OVERLAY_NEEDS_PHYSICAL(overlay->dev))
 		regs = (struct overlay_registers __iomem *)overlay->reg_bo->phys_obj->handle->vaddr;
 	else
-		regs = pmap_mapdev_attr(dev_priv->mm.gtt_base_addr +
-		    overlay->reg_bo->gtt_offset, PAGE_SIZE,
-		    PAT_WRITE_COMBINING);
+		regs = io_mapping_map_wc(dev_priv->gtt.mappable,
+					 overlay->reg_bo->gtt_offset);
 
 	return regs;
 }
@@ -209,7 +208,7 @@ static void intel_overlay_unmap_regs(struct intel_overlay *overlay,
 				     struct overlay_registers __iomem *regs)
 {
 	if (!OVERLAY_NEEDS_PHYSICAL(overlay->dev))
-		pmap_unmapdev((vm_offset_t)regs, PAGE_SIZE);
+		io_mapping_unmap(regs);
 }
 
 static int intel_overlay_do_wait_request(struct intel_overlay *overlay,
@@ -693,8 +692,8 @@ static int intel_overlay_do_put_image(struct intel_overlay *overlay,
 #endif
 	u32 swidth, swidthsw, sheight, ostride;
 
-	DRM_LOCK_ASSERT(dev);
-	sx_assert(&dev->mode_config.mutex, SA_XLOCKED);
+	BUG_ON(!mutex_is_locked(&dev->struct_mutex));
+	BUG_ON(!mutex_is_locked(&dev->mode_config.mutex));
 	BUG_ON(!overlay);
 
 	ret = intel_overlay_release_old_vid(overlay);
@@ -800,8 +799,8 @@ int intel_overlay_switch_off(struct intel_overlay *overlay)
 #endif
 	int ret;
 
-	DRM_LOCK_ASSERT(dev);
-	sx_assert(&dev->mode_config.mutex, SA_XLOCKED);
+	BUG_ON(!mutex_is_locked(&dev->struct_mutex));
+	BUG_ON(!mutex_is_locked(&dev->mode_config.mutex));
 
 	ret = intel_overlay_recover_from_interrupt(overlay);
 	if (ret != 0)
@@ -1053,18 +1052,18 @@ int intel_overlay_put_image(struct drm_device *dev, void *data,
 	}
 
 	if (!(put_image_rec->flags & I915_OVERLAY_ENABLE)) {
-		sx_xlock(&dev->mode_config.mutex);
-		DRM_LOCK(dev);
+		drm_modeset_lock_all(dev);
+		mutex_lock(&dev->struct_mutex);
 
 		ret = intel_overlay_switch_off(overlay);
 
-		DRM_UNLOCK(dev);
-		sx_xunlock(&dev->mode_config.mutex);
+		mutex_unlock(&dev->struct_mutex);
+		drm_modeset_unlock_all(dev);
 
 		return ret;
 	}
 
-	params = malloc(sizeof(struct put_image_params), DRM_I915_GEM, M_WAITOK);
+	params = kmalloc(sizeof(struct put_image_params), GFP_KERNEL);
 	if (!params)
 		return -ENOMEM;
 
@@ -1083,8 +1082,8 @@ int intel_overlay_put_image(struct drm_device *dev, void *data,
 		goto out_free;
 	}
 
-	sx_xlock(&dev->mode_config.mutex);
-	DRM_LOCK(dev);
+	drm_modeset_lock_all(dev);
+	mutex_lock(&dev->struct_mutex);
 
 	if (new_bo->tiling_mode) {
 		DRM_ERROR("buffer used for overlay image can not be tiled\n");
@@ -1164,19 +1163,19 @@ int intel_overlay_put_image(struct drm_device *dev, void *data,
 	if (ret != 0)
 		goto out_unlock;
 
-	DRM_UNLOCK(dev);
-	sx_xunlock(&dev->mode_config.mutex);
+	mutex_unlock(&dev->struct_mutex);
+	drm_modeset_unlock_all(dev);
 
-	free(params, DRM_I915_GEM);
+	kfree(params);
 
 	return 0;
 
 out_unlock:
-	DRM_UNLOCK(dev);
-	sx_xunlock(&dev->mode_config.mutex);
+	mutex_unlock(&dev->struct_mutex);
+	drm_modeset_unlock_all(dev);
 	drm_gem_object_unreference_unlocked(&new_bo->base);
 out_free:
-	free(params, DRM_I915_GEM);
+	kfree(params);
 
 	return ret;
 }
@@ -1249,8 +1248,8 @@ int intel_overlay_attrs(struct drm_device *dev, void *data,
 		return -ENODEV;
 	}
 
-	sx_xlock(&dev->mode_config.mutex);
-	DRM_LOCK(dev);
+	drm_modeset_lock_all(dev);
+	mutex_lock(&dev->struct_mutex);
 
 	ret = -EINVAL;
 	if (!(attrs->flags & I915_OVERLAY_UPDATE_ATTRS)) {
@@ -1314,8 +1313,8 @@ int intel_overlay_attrs(struct drm_device *dev, void *data,
 
 	ret = 0;
 out_unlock:
-	DRM_UNLOCK(dev);
-	sx_xunlock(&dev->mode_config.mutex);
+	mutex_unlock(&dev->struct_mutex);
+	drm_modeset_unlock_all(dev);
 
 	return ret;
 }
@@ -1331,18 +1330,20 @@ void intel_setup_overlay(struct drm_device *dev)
 	if (!HAS_OVERLAY(dev))
 		return;
 
-	overlay = malloc(sizeof(struct intel_overlay), DRM_I915_GEM, M_WAITOK | M_ZERO);
+	overlay = kzalloc(sizeof(struct intel_overlay), GFP_KERNEL);
 	if (!overlay)
 		return;
 
-	DRM_LOCK(dev);
+	mutex_lock(&dev->struct_mutex);
 	if (WARN_ON(dev_priv->overlay))
 		goto out_free;
 
 	overlay->dev = dev;
 
-	reg_bo = i915_gem_alloc_object(dev, PAGE_SIZE);
-	if (!reg_bo)
+	reg_bo = i915_gem_object_create_stolen(dev, PAGE_SIZE);
+	if (reg_bo == NULL)
+		reg_bo = i915_gem_alloc_object(dev, PAGE_SIZE);
+	if (reg_bo == NULL)
 		goto out_free;
 	overlay->reg_bo = reg_bo;
 
@@ -1387,7 +1388,7 @@ void intel_setup_overlay(struct drm_device *dev)
 	intel_overlay_unmap_regs(overlay, regs);
 
 	dev_priv->overlay = overlay;
-	DRM_UNLOCK(dev);
+	mutex_unlock(&dev->struct_mutex);
 	DRM_INFO("initialized overlay support\n");
 	return;
 
@@ -1397,8 +1398,8 @@ out_unpin_bo:
 out_free_bo:
 	drm_gem_object_unreference(&reg_bo->base);
 out_free:
-	DRM_UNLOCK(dev);
-	free(overlay, DRM_I915_GEM);
+	mutex_unlock(&dev->struct_mutex);
+	kfree(overlay);
 	return;
 }
 
@@ -1415,11 +1416,11 @@ void intel_cleanup_overlay(struct drm_device *dev)
 	BUG_ON(dev_priv->overlay->active);
 
 	drm_gem_object_unreference_unlocked(&dev_priv->overlay->reg_bo->base);
-	free(dev_priv->overlay, DRM_I915_GEM);
+	kfree(dev_priv->overlay);
 }
 
 //#ifdef CONFIG_DEBUG_FS
-#define	seq_printf(m, fmt, ...)	sbuf_printf((m), (fmt), ##__VA_ARGS__)
+#include <linux/seq_file.h>
 
 struct intel_overlay_error_state {
 	struct overlay_registers regs;
@@ -1428,10 +1429,31 @@ struct intel_overlay_error_state {
 	u32 isr;
 };
 
-/*
- * NOTE Linux<->FreeBSD: We use the normal intel_overlay_map_regs() and
- * intel_overlay_unmap_regs() defined at the top of this file.
- */
+static struct overlay_registers __iomem *
+intel_overlay_map_regs_atomic(struct intel_overlay *overlay)
+{
+	drm_i915_private_t *dev_priv = overlay->dev->dev_private;
+	struct overlay_registers __iomem *regs;
+
+	if (OVERLAY_NEEDS_PHYSICAL(overlay->dev))
+		/* Cast to make sparse happy, but it's wc memory anyway, so
+		 * equivalent to the wc io mapping on X86. */
+		regs = (struct overlay_registers __iomem *)
+			overlay->reg_bo->phys_obj->handle->vaddr;
+	else
+		regs = io_mapping_map_atomic_wc(dev_priv->gtt.mappable,
+						overlay->reg_bo->gtt_offset);
+
+	return regs;
+}
+
+static void intel_overlay_unmap_regs_atomic(struct intel_overlay *overlay,
+					struct overlay_registers __iomem *regs)
+{
+	if (!OVERLAY_NEEDS_PHYSICAL(overlay->dev))
+		io_mapping_unmap_atomic(regs);
+}
+
 
 struct intel_overlay_error_state *
 intel_overlay_capture_error_state(struct drm_device *dev)
@@ -1444,7 +1466,7 @@ intel_overlay_capture_error_state(struct drm_device *dev)
 	if (!overlay || !overlay->active)
 		return NULL;
 
-	error = malloc(sizeof(*error), DRM_I915_GEM, M_NOWAIT);
+	error = kmalloc(sizeof(*error), GFP_ATOMIC);
 	if (error == NULL)
 		return NULL;
 
@@ -1455,22 +1477,22 @@ intel_overlay_capture_error_state(struct drm_device *dev)
 	else
 		error->base = overlay->reg_bo->gtt_offset;
 
-	regs = intel_overlay_map_regs(overlay);
+	regs = intel_overlay_map_regs_atomic(overlay);
 	if (!regs)
 		goto err;
 
 	memcpy_fromio(&error->regs, regs, sizeof(struct overlay_registers));
-	intel_overlay_unmap_regs(overlay, regs);
+	intel_overlay_unmap_regs_atomic(overlay, regs);
 
 	return error;
 
 err:
-	free(error, DRM_I915_GEM);
+	kfree(error);
 	return NULL;
 }
 
 void
-intel_overlay_print_error_state(struct sbuf *m, struct intel_overlay_error_state *error)
+intel_overlay_print_error_state(struct seq_file *m, struct intel_overlay_error_state *error)
 {
 	seq_printf(m, "Overlay, status: 0x%08x, interrupt: 0x%08x\n",
 		   error->dovsta, error->isr);

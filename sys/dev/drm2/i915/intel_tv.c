@@ -1176,17 +1176,18 @@ intel_tv_detect_type(struct intel_tv *intel_tv,
 	struct intel_crtc *intel_crtc = to_intel_crtc(crtc);
 	struct drm_device *dev = encoder->dev;
 	struct drm_i915_private *dev_priv = dev->dev_private;
+	unsigned long irqflags;
 	u32 tv_ctl, save_tv_ctl;
 	u32 tv_dac, save_tv_dac;
 	int type;
 
 	/* Disable TV interrupts around load detect or we'll recurse */
 	if (connector->polled & DRM_CONNECTOR_POLL_HPD) {
-		mtx_lock(&dev_priv->irq_lock);
+		spin_lock_irqsave(&dev_priv->irq_lock, irqflags);
 		i915_disable_pipestat(dev_priv, 0,
 				      PIPE_HOTPLUG_INTERRUPT_ENABLE |
 				      PIPE_HOTPLUG_TV_INTERRUPT_ENABLE);
-		mtx_unlock(&dev_priv->irq_lock);
+		spin_unlock_irqrestore(&dev_priv->irq_lock, irqflags);
 	}
 
 	save_tv_dac = tv_dac = I915_READ(TV_DAC);
@@ -1259,11 +1260,11 @@ intel_tv_detect_type(struct intel_tv *intel_tv,
 
 	/* Restore interrupt config */
 	if (connector->polled & DRM_CONNECTOR_POLL_HPD) {
-		mtx_lock(&dev_priv->irq_lock);
+		spin_lock_irqsave(&dev_priv->irq_lock, irqflags);
 		i915_enable_pipestat(dev_priv, 0,
 				     PIPE_HOTPLUG_INTERRUPT_ENABLE |
 				     PIPE_HOTPLUG_TV_INTERRUPT_ENABLE);
-		mtx_unlock(&dev_priv->irq_lock);
+		spin_unlock_irqrestore(&dev_priv->irq_lock, irqflags);
 	}
 
 	return type;
@@ -1431,8 +1432,9 @@ intel_tv_get_modes(struct drm_connector *connector)
 static void
 intel_tv_destroy(struct drm_connector *connector)
 {
+	drm_sysfs_connector_remove(connector);
 	drm_connector_cleanup(connector);
-	free(connector, DRM_MEM_KMS);
+	kfree(connector);
 }
 
 
@@ -1482,8 +1484,7 @@ intel_tv_set_property(struct drm_connector *connector, struct drm_property *prop
 	}
 
 	if (changed && crtc)
-		intel_set_mode(crtc, &crtc->mode,
-			       crtc->x, crtc->y, crtc->fb);
+		intel_crtc_restore_mode(crtc);
 out:
 	return ret;
 }
@@ -1491,7 +1492,6 @@ out:
 static const struct drm_encoder_helper_funcs intel_tv_helper_funcs = {
 	.mode_fixup = intel_tv_mode_fixup,
 	.mode_set = intel_tv_mode_set,
-	.disable = intel_encoder_noop,
 };
 
 static const struct drm_connector_funcs intel_tv_connector_funcs = {
@@ -1594,14 +1594,14 @@ intel_tv_init(struct drm_device *dev)
 	    (tv_dac_off & TVDAC_STATE_CHG_EN) != 0)
 		return;
 
-	intel_tv = malloc(sizeof(struct intel_tv), DRM_MEM_KMS, M_WAITOK | M_ZERO);
+	intel_tv = kzalloc(sizeof(struct intel_tv), GFP_KERNEL);
 	if (!intel_tv) {
 		return;
 	}
 
-	intel_connector = malloc(sizeof(struct intel_connector), DRM_MEM_KMS, M_WAITOK | M_ZERO);
+	intel_connector = kzalloc(sizeof(struct intel_connector), GFP_KERNEL);
 	if (!intel_connector) {
-		free(intel_tv, DRM_MEM_KMS);
+		kfree(intel_tv);
 		return;
 	}
 
@@ -1672,4 +1672,5 @@ intel_tv_init(struct drm_device *dev)
 	drm_object_attach_property(&connector->base,
 				   dev->mode_config.tv_bottom_margin_property,
 				   intel_tv->margin[TV_MARGIN_BOTTOM]);
+	drm_sysfs_connector_add(connector);
 }

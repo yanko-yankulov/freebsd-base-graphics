@@ -152,7 +152,7 @@ reserve:
 	 * move.
 	 */
 
-	mtx_lock(&bdev->fence_lock);
+	spin_lock(&bdev->fence_lock);
 	if (test_bit(TTM_BO_PRIV_FLAG_MOVING, &bo->priv_flags)) {
 		/*
 		 * Here, the behavior differs between Linux and FreeBSD.
@@ -171,13 +171,13 @@ reserve:
 		 * and the process to receive SIGSEGV.
 		 */
 		ret = ttm_bo_wait(bo, false, false, false);
-		mtx_unlock(&bdev->fence_lock);
+		spin_unlock(&bdev->fence_lock);
 		if (unlikely(ret != 0)) {
 			retval = VM_PAGER_ERROR;
 			goto out_unlock;
 		}
 	} else
-		mtx_unlock(&bdev->fence_lock);
+		spin_unlock(&bdev->fence_lock);
 
 	ret = ttm_mem_io_lock(man, true);
 	if (unlikely(ret != 0)) {
@@ -328,15 +328,15 @@ ttm_bo_mmap_single(struct ttm_bo_device *bdev, vm_ooffset_t *offset, vm_size_t s
 	struct vm_object *vm_obj;
 	int ret;
 
-	rw_wlock(&bdev->vm_lock);
+	read_lock(&bdev->vm_lock);
 	bo = ttm_bo_vm_lookup_rb(bdev, OFF_TO_IDX(*offset), OFF_TO_IDX(size));
 	if (likely(bo != NULL))
-		refcount_acquire(&bo->kref);
-	rw_wunlock(&bdev->vm_lock);
+		kref_get(&bo->kref);
+	read_unlock(&bdev->vm_lock);
 
 	if (unlikely(bo == NULL)) {
-		printf("[TTM] Could not find buffer object to map\n");
-		return (-EINVAL);
+		pr_err("Could not find buffer object to map\n");
+		return -EINVAL;
 	}
 
 	driver = bo->bdev->driver;
@@ -364,6 +364,7 @@ out_unref:
 	ttm_bo_unref(&bo);
 	return ret;
 }
+EXPORT_SYMBOL(ttm_bo_mmap);
 
 void
 ttm_bo_release_mmap(struct ttm_buffer_object *bo)
@@ -402,6 +403,8 @@ int ttm_fbdev_mmap(struct vm_area_struct *vma, struct ttm_buffer_object *bo)
 	vma->vm_flags |= VM_IO | VM_MIXEDMAP | VM_DONTEXPAND;
 	return 0;
 }
+EXPORT_SYMBOL(ttm_fbdev_mmap);
+
 
 ssize_t ttm_bo_io(struct ttm_bo_device *bdev, struct file *filp,
 		  const char __user *wbuf, char __user *rbuf, size_t count,

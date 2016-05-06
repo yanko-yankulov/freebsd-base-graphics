@@ -1,0 +1,4 @@
+### Stubbed implementations:
+
+kthread:
+in_atomic

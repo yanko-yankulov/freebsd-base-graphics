@@ -37,6 +37,9 @@ __FBSDID("$FreeBSD$");
 #include <dev/drm2/ttm/ttm_placement.h>
 #include <dev/drm2/drm_mm.h>
 
+#include <linux/spinlock.h>
+#include <linux/module.h>
+
 /**
  * Currently we use a spinlock for the lock, but a mutex *may* be
  * more appropriate to reduce scheduling latency if the range manager
@@ -45,10 +48,8 @@ __FBSDID("$FreeBSD$");
 
 struct ttm_range_manager {
 	struct drm_mm mm;
-	struct mtx lock;
+	spinlock_t lock;
 };
-
-MALLOC_DEFINE(M_TTM_RMAN, "ttm_rman", "TTM Range Manager");
 
 static int ttm_bo_man_get_node(struct ttm_mem_type_manager *man,
 			       struct ttm_buffer_object *bo,
@@ -69,19 +70,19 @@ static int ttm_bo_man_get_node(struct ttm_mem_type_manager *man,
 		if (unlikely(ret))
 			return ret;
 
-		mtx_lock(&rman->lock);
+		spin_lock(&rman->lock);
 		node = drm_mm_search_free_in_range(mm,
 					mem->num_pages, mem->page_alignment,
 					placement->fpfn, lpfn, 1);
 		if (unlikely(node == NULL)) {
-			mtx_unlock(&rman->lock);
+			spin_unlock(&rman->lock);
 			return 0;
 		}
 		node = drm_mm_get_block_atomic_range(node, mem->num_pages,
 						     mem->page_alignment,
 						     placement->fpfn,
 						     lpfn);
-		mtx_unlock(&rman->lock);
+		spin_unlock(&rman->lock);
 	} while (node == NULL);
 
 	mem->mm_node = node;
@@ -95,9 +96,9 @@ static void ttm_bo_man_put_node(struct ttm_mem_type_manager *man,
 	struct ttm_range_manager *rman = (struct ttm_range_manager *) man->priv;
 
 	if (mem->mm_node) {
-		mtx_lock(&rman->lock);
+		spin_lock(&rman->lock);
 		drm_mm_put_block(mem->mm_node);
-		mtx_unlock(&rman->lock);
+		spin_unlock(&rman->lock);
 		mem->mm_node = NULL;
 	}
 }
@@ -108,14 +109,17 @@ static int ttm_bo_man_init(struct ttm_mem_type_manager *man,
 	struct ttm_range_manager *rman;
 	int ret;
 
-	rman = malloc(sizeof(*rman), M_TTM_RMAN, M_ZERO | M_WAITOK);
+	rman = kzalloc(sizeof(*rman), GFP_KERNEL);
+	if (!rman)
+		return -ENOMEM;
+
 	ret = drm_mm_init(&rman->mm, 0, p_size);
 	if (ret) {
-		free(rman, M_TTM_RMAN);
+		kfree(rman);
 		return ret;
 	}
 
-	mtx_init(&rman->lock, "ttmrman", NULL, MTX_DEF);
+	spin_lock_init(&rman->lock);
 	man->priv = rman;
 	return 0;
 }
@@ -125,16 +129,15 @@ static int ttm_bo_man_takedown(struct ttm_mem_type_manager *man)
 	struct ttm_range_manager *rman = (struct ttm_range_manager *) man->priv;
 	struct drm_mm *mm = &rman->mm;
 
-	mtx_lock(&rman->lock);
+	spin_lock(&rman->lock);
 	if (drm_mm_clean(mm)) {
 		drm_mm_takedown(mm);
-		mtx_unlock(&rman->lock);
-		mtx_destroy(&rman->lock);
-		free(rman, M_TTM_RMAN);
+		spin_unlock(&rman->lock);
+		kfree(rman);
 		man->priv = NULL;
 		return 0;
 	}
-	mtx_unlock(&rman->lock);
+	spin_unlock(&rman->lock);
 	return -EBUSY;
 }
 
@@ -143,9 +146,9 @@ static void ttm_bo_man_debug(struct ttm_mem_type_manager *man,
 {
 	struct ttm_range_manager *rman = (struct ttm_range_manager *) man->priv;
 
-	mtx_lock(&rman->lock);
+	spin_lock(&rman->lock);
 	drm_mm_debug_table(&rman->mm, prefix);
-	mtx_unlock(&rman->lock);
+	spin_unlock(&rman->lock);
 }
 
 const struct ttm_mem_type_manager_func ttm_bo_manager_func = {
@@ -155,3 +158,4 @@ const struct ttm_mem_type_manager_func ttm_bo_manager_func = {
 	ttm_bo_man_put_node,
 	ttm_bo_man_debug
 };
+EXPORT_SYMBOL(ttm_bo_manager_func);

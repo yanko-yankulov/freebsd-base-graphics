@@ -98,7 +98,6 @@ SUBDIR=	\
 	de \
 	${_dpms} \
 	${_dpt} \
-	${_drm} \
 	${_drm2} \
 	dummynet \
 	${_ed} \

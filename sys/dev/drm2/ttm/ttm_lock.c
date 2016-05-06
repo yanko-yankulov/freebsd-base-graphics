@@ -49,71 +49,62 @@ __FBSDID("$FreeBSD$");
 
 void ttm_lock_init(struct ttm_lock *lock)
 {
-	mtx_init(&lock->lock, "ttmlk", NULL, MTX_DEF);
+	spin_lock_init(&lock->lock);
+	init_waitqueue_head(&lock->queue);
 	lock->rw = 0;
 	lock->flags = 0;
 	lock->kill_takers = false;
 	lock->signal = SIGKILL;
 }
+EXPORT_SYMBOL(ttm_lock_init);
 
 static void
 ttm_lock_send_sig(int signo)
 {
-	struct proc *p;
-
-	p = curproc;	/* XXXKIB curthread ? */
-	PROC_LOCK(p);
-	kern_psignal(p, signo);
-	PROC_UNLOCK(p);
+	PROC_LOCK(curproc);
+	tdsignal(curthread, signo);
+	PROC_UNLOCK(curproc);
 }
 
 void ttm_read_unlock(struct ttm_lock *lock)
 {
-	mtx_lock(&lock->lock);
+	spin_lock(&lock->lock);
 	if (--lock->rw == 0)
-		wakeup(lock);
-	mtx_unlock(&lock->lock);
+		wake_up_all(&lock->queue);
+	spin_unlock(&lock->lock);
 }
+EXPORT_SYMBOL(ttm_read_unlock);
 
 static bool __ttm_read_lock(struct ttm_lock *lock)
 {
 	bool locked = false;
 
+	spin_lock(&lock->lock);
 	if (unlikely(lock->kill_takers)) {
 		ttm_lock_send_sig(lock->signal);
+		spin_unlock(&lock->lock);
 		return false;
 	}
 	if (lock->rw >= 0 && lock->flags == 0) {
 		++lock->rw;
 		locked = true;
 	}
+	spin_unlock(&lock->lock);
 	return locked;
 }
 
-int
-ttm_read_lock(struct ttm_lock *lock, bool interruptible)
+int ttm_read_lock(struct ttm_lock *lock, bool interruptible)
 {
-	const char *wmsg;
-	int flags, ret;
+	int ret = 0;
 
-	ret = 0;
-	if (interruptible) {
-		flags = PCATCH;
-		wmsg = "ttmri";
-	} else {
-		flags = 0;
-		wmsg = "ttmr";
-	}
-	mtx_lock(&lock->lock);
-	while (!__ttm_read_lock(lock)) {
-		ret = -bsd_msleep(lock, &lock->lock, flags, wmsg, 0);
-		if (ret == -EINTR || ret == -ERESTART)
-			ret = -ERESTARTSYS;
-		if (ret != 0)
-			break;
-	}
-	return (ret);
+	if (interruptible)
+		ret = wait_event_interruptible(lock->queue,
+					       __ttm_read_lock(lock));
+	else
+		wait_event(lock->queue, __ttm_read_lock(lock));
+	return ret;
 }
+EXPORT_SYMBOL(ttm_read_lock);
 
 static bool __ttm_read_trylock(struct ttm_lock *lock, bool *locked)
 {
@@ -121,8 +112,10 @@ static bool __ttm_read_trylock(struct ttm_lock *lock, bool *locked)
 
 	*locked = false;
 
+	spin_lock(&lock->lock);
 	if (unlikely(lock->kill_takers)) {
 		ttm_lock_send_sig(lock->signal);
+		spin_unlock(&lock->lock);
 		return false;
 	}
 	if (lock->rw >= 0 && lock->flags == 0) {
@@ -132,52 +125,47 @@ static bool __ttm_read_trylock(struct ttm_lock *lock, bool *locked)
 	} else if (lock->flags == 0) {
 		block = false;
 	}
+	spin_unlock(&lock->lock);
 
 	return !block;
 }
 
 int ttm_read_trylock(struct ttm_lock *lock, bool interruptible)
 {
-	const char *wmsg;
-	int flags, ret;
+	int ret = 0;
 	bool locked;
 
-	ret = 0;
-	if (interruptible) {
-		flags = PCATCH;
-		wmsg = "ttmrti";
-	} else {
-		flags = 0;
-		wmsg = "ttmrt";
+	if (interruptible)
+		ret = wait_event_interruptible
+			(lock->queue, __ttm_read_trylock(lock, &locked));
+	else
+		wait_event(lock->queue, __ttm_read_trylock(lock, &locked));
+
+	if (unlikely(ret != 0)) {
+		BUG_ON(locked);
+		return ret;
 	}
-	mtx_lock(&lock->lock);
-	while (!__ttm_read_trylock(lock, &locked)) {
-		ret = -bsd_msleep(lock, &lock->lock, flags, wmsg, 0);
-		if (ret == -EINTR || ret == -ERESTART)
-			ret = -ERESTARTSYS;
-		if (ret != 0)
-			break;
-	}
-	MPASS(!locked || ret == 0);
-	mtx_unlock(&lock->lock);
 
 	return (locked) ? 0 : -EBUSY;
 }
 
 void ttm_write_unlock(struct ttm_lock *lock)
 {
-	mtx_lock(&lock->lock);
+	spin_lock(&lock->lock);
 	lock->rw = 0;
-	wakeup(lock);
-	mtx_unlock(&lock->lock);
+	wake_up_all(&lock->queue);
+	spin_unlock(&lock->lock);
 }
+EXPORT_SYMBOL(ttm_write_unlock);
 
 static bool __ttm_write_lock(struct ttm_lock *lock)
 {
 	bool locked = false;
 
+	spin_lock(&lock->lock);
 	if (unlikely(lock->kill_takers)) {
 		ttm_lock_send_sig(lock->signal);
+		spin_unlock(&lock->lock);
 		return false;
 	}
 	if (lock->rw == 0 && ((lock->flags & ~TTM_WRITE_LOCK_PENDING) == 0)) {
@@ -187,58 +175,48 @@ static bool __ttm_write_lock(struct ttm_lock *lock)
 	} else {
 		lock->flags |= TTM_WRITE_LOCK_PENDING;
 	}
+	spin_unlock(&lock->lock);
 	return locked;
 }
 
-int
-ttm_write_lock(struct ttm_lock *lock, bool interruptible)
+int ttm_write_lock(struct ttm_lock *lock, bool interruptible)
 {
-	const char *wmsg;
-	int flags, ret;
+	int ret = 0;
 
-	ret = 0;
 	if (interruptible) {
-		flags = PCATCH;
-		wmsg = "ttmwi";
-	} else {
-		flags = 0;
-		wmsg = "ttmw";
-	}
-	mtx_lock(&lock->lock);
-	/* XXXKIB: linux uses __ttm_read_lock for uninterruptible sleeps */
-	while (!__ttm_write_lock(lock)) {
-		ret = -bsd_msleep(lock, &lock->lock, flags, wmsg, 0);
-		if (ret == -EINTR || ret == -ERESTART)
-			ret = -ERESTARTSYS;
-		if (interruptible && ret != 0) {
+		ret = wait_event_interruptible(lock->queue,
+					       __ttm_write_lock(lock));
+		if (unlikely(ret != 0)) {
+			spin_lock(&lock->lock);
 			lock->flags &= ~TTM_WRITE_LOCK_PENDING;
-			wakeup(lock);
-			break;
+			wake_up_all(&lock->queue);
+			spin_unlock(&lock->lock);
 		}
-	}
-	mtx_unlock(&lock->lock);
+	} else
+		wait_event(lock->queue, __ttm_read_lock(lock));
 
-	return (ret);
+	return ret;
 }
+EXPORT_SYMBOL(ttm_write_lock);
 
 void ttm_write_lock_downgrade(struct ttm_lock *lock)
 {
-	mtx_lock(&lock->lock);
+	spin_lock(&lock->lock);
 	lock->rw = 1;
-	wakeup(lock);
-	mtx_unlock(&lock->lock);
+	wake_up_all(&lock->queue);
+	spin_unlock(&lock->lock);
 }
 
 static int __ttm_vt_unlock(struct ttm_lock *lock)
 {
 	int ret = 0;
 
-	mtx_lock(&lock->lock);
+	spin_lock(&lock->lock);
 	if (unlikely(!(lock->flags & TTM_VT_LOCK)))
 		ret = -EINVAL;
 	lock->flags &= ~TTM_VT_LOCK;
-	wakeup(lock);
-	mtx_unlock(&lock->lock);
+	wake_up_all(&lock->queue);
+	spin_unlock(&lock->lock);
 
 	return ret;
 }
@@ -251,13 +229,14 @@ static void ttm_vt_lock_remove(struct ttm_base_object **p_base)
 
 	*p_base = NULL;
 	ret = __ttm_vt_unlock(lock);
-	MPASS(ret == 0);
+	BUG_ON(ret != 0);
 }
 
 static bool __ttm_vt_lock(struct ttm_lock *lock)
 {
 	bool locked = false;
 
+	spin_lock(&lock->lock);
 	if (lock->rw == 0) {
 		lock->flags &= ~TTM_VT_LOCK_PENDING;
 		lock->flags |= TTM_VT_LOCK;
@@ -265,6 +244,7 @@ static bool __ttm_vt_lock(struct ttm_lock *lock)
 	} else {
 		lock->flags |= TTM_VT_LOCK_PENDING;
 	}
+	spin_unlock(&lock->lock);
 	return locked;
 }
 
@@ -272,28 +252,20 @@ int ttm_vt_lock(struct ttm_lock *lock,
 		bool interruptible,
 		struct ttm_object_file *tfile)
 {
-	const char *wmsg;
-	int flags, ret;
+	int ret = 0;
 
-	ret = 0;
 	if (interruptible) {
-		flags = PCATCH;
-		wmsg = "ttmwi";
-	} else {
-		flags = 0;
-		wmsg = "ttmw";
-	}
-	mtx_lock(&lock->lock);
-	while (!__ttm_vt_lock(lock)) {
-		ret = -bsd_msleep(lock, &lock->lock, flags, wmsg, 0);
-		if (ret == -EINTR || ret == -ERESTART)
-			ret = -ERESTARTSYS;
-		if (interruptible && ret != 0) {
+		ret = wait_event_interruptible(lock->queue,
+					       __ttm_vt_lock(lock));
+		if (unlikely(ret != 0)) {
+			spin_lock(&lock->lock);
 			lock->flags &= ~TTM_VT_LOCK_PENDING;
-			wakeup(lock);
-			break;
+			wake_up_all(&lock->queue);
+			spin_unlock(&lock->lock);
+			return ret;
 		}
-	}
+	} else
+		wait_event(lock->queue, __ttm_vt_lock(lock));
 
 	/*
 	 * Add a base-object, the destructor of which will
@@ -308,27 +280,31 @@ int ttm_vt_lock(struct ttm_lock *lock,
 	else
 		lock->vt_holder = tfile;
 
-	return (ret);
+	return ret;
 }
+EXPORT_SYMBOL(ttm_vt_lock);
 
 int ttm_vt_unlock(struct ttm_lock *lock)
 {
 	return ttm_ref_object_base_unref(lock->vt_holder,
 					 lock->base.hash.key, TTM_REF_USAGE);
 }
+EXPORT_SYMBOL(ttm_vt_unlock);
 
 void ttm_suspend_unlock(struct ttm_lock *lock)
 {
-	mtx_lock(&lock->lock);
+	spin_lock(&lock->lock);
 	lock->flags &= ~TTM_SUSPEND_LOCK;
-	wakeup(lock);
-	mtx_unlock(&lock->lock);
+	wake_up_all(&lock->queue);
+	spin_unlock(&lock->lock);
 }
+EXPORT_SYMBOL(ttm_suspend_unlock);
 
 static bool __ttm_suspend_lock(struct ttm_lock *lock)
 {
 	bool locked = false;
 
+	spin_lock(&lock->lock);
 	if (lock->rw == 0) {
 		lock->flags &= ~TTM_SUSPEND_LOCK_PENDING;
 		lock->flags |= TTM_SUSPEND_LOCK;
@@ -336,13 +312,12 @@ static bool __ttm_suspend_lock(struct ttm_lock *lock)
 	} else {
 		lock->flags |= TTM_SUSPEND_LOCK_PENDING;
 	}
+	spin_unlock(&lock->lock);
 	return locked;
 }
 
 void ttm_suspend_lock(struct ttm_lock *lock)
 {
-	mtx_lock(&lock->lock);
-	while (!__ttm_suspend_lock(lock))
-		bsd_msleep(lock, &lock->lock, 0, "ttms", 0);
-	mtx_unlock(&lock->lock);
+	wait_event(lock->queue, __ttm_suspend_lock(lock));
 }
+EXPORT_SYMBOL(ttm_suspend_lock);

@@ -49,6 +49,11 @@ typedef struct {
 	unsigned int	wchan;
 } wait_queue_head_t;
 
+#define DECLARE_WAITQUEUE(name, tsk)	\
+	wait_queue_t name
+#define DECLARE_WAIT_QUEUE_HEAD(name)    \
+        wait_queue_head_t name
+
 #define	init_waitqueue_head(x) \
     do { } while (0)
 
@@ -67,7 +72,7 @@ __wake_up(wait_queue_head_t *q, int all)
 #define	wake_up_all(q)				__wake_up(q, 1)
 #define	wake_up_interruptible(q)		__wake_up(q, 0)
 #define	wake_up_interruptible_nr(q, nr)		__wake_up(q, 1)
-#define	wake_up_interruptible_all(q, nr)	__wake_up(q, 1)
+#define	wake_up_interruptible_all(q)		__wake_up(q, 1)
 
 #define	wait_event(q, cond)						\
 do {									\
@@ -107,56 +112,75 @@ do {									\
 	-_error;							\
 })
 
+/* jiffies2ticks XXX ? */
 #define	wait_event_interruptible_timeout(q, cond, timeout)		\
 ({									\
 	void *c = &(q).wchan;						\
-	long end = jiffies + timeout;					\
-	int __ret = 0;	 						\
-	int __rc = 0;							\
+	int _error;							\
 									\
+	_error = 0;							\
 	if (!(cond)) {							\
-		for (; __rc == 0;) {					\
+		for (; _error == 0;) {					\
 			sleepq_lock(c);					\
 			if (cond) {					\
 				sleepq_release(c);			\
-				__ret = 1;				\
 				break;					\
 			}						\
 			sleepq_add(c, NULL, "completion",		\
-			SLEEPQ_SLEEP | SLEEPQ_INTERRUPTIBLE, 0);	\
-			sleepq_set_timeout(c, linux_timer_jiffies_until(end));\
-			__rc = sleepq_timedwait_sig (c, 0);		\
-			if (__rc != 0) {				\
-				/* check for timeout or signal. 	\
-				 * 0 if the condition evaluated to false\
-				 * after the timeout elapsed,  1 if the \
-				 * condition evaluated to true after the\
-				 * timeout elapsed.			\
-				 */					\
-				if (__rc == EWOULDBLOCK)		\
-					__ret = (cond);			\
-				 else					\
-					__ret = -ERESTARTSYS;		\
-			}						\
-									\
+				   SLEEPQ_SLEEP | SLEEPQ_INTERRUPTIBLE, 0); \
+			sleepq_set_timeout(c, timeout);			\
+			if (sleepq_timedwait_sig(c, 0))			\
+				_error = -ERESTARTSYS;			\
 		}							\
-	} else {							\
-		/* return remaining jiffies (at least 1) if the 	\
-		 * condition evaluated to true before the timeout	\
-		 * elapsed.						\
-		 */							\
-		__ret = (end - jiffies);				\
-		if( __ret < 1 )						\
-			__ret = 1;					\
 	}								\
-	__ret;								\
+	-_error;							\
+})
+
+
+#define	__wait_event_timeout(q, cond, timeout)				\
+({									\
+	void *c = &(q).wchan;						\
+	int _error;							\
+									\
+	_error = 0;							\
+	if (!(cond)) {							\
+		for (; _error == 0;) {					\
+			sleepq_lock(c);					\
+			if (cond) {					\
+				sleepq_release(c);			\
+				break;					\
+			}						\
+			sleepq_add(c, NULL, "completion",		\
+				   SLEEPQ_SLEEP, 0); \
+			sleepq_set_timeout(c, timeout);			\
+			if (sleepq_timedwait(c, 0))			\
+				_error = -ERESTARTSYS;			\
+		}							\
+	}								\
+	-_error;							\
+})
+
+
+
+#define wait_event_timeout(wq, condition, timeout)			\
+({									\
+	long __ret = timeout;						\
+	if (!(condition)) 						\
+		__wait_event_timeout(wq, condition, __ret);		\
+ 	__ret;								\
 })
 
 
 static inline int
 waitqueue_active(wait_queue_head_t *q)
 {
-	return 0;	/* XXX: not really implemented */
+	void *c = &(q)->wchan;
+	void *sq;
+
+	sleepq_lock(c);
+	sq = sleepq_lookup(c);
+	sleepq_release(c);
+	return (sq != NULL);
 }
 
 #define DEFINE_WAIT(name)	\
@@ -172,4 +196,4 @@ finish_wait(wait_queue_head_t *q, wait_queue_t *wait)
 {
 }
 
-#endif	/* _LINUX_WAIT_H_ */
+#endif

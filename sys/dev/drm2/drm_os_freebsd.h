@@ -16,28 +16,14 @@ __FBSDID("$FreeBSD$");
 #include <asm/uaccess.h>
 #include <linux/delay.h>
 #include <linux/slab.h>
-
-/*
- * Work around conflicting pci read/write wrappers in linuxkpi.  DRM doesn't
- * use Linux pci_dev at this time.
- */
-#define	pci_read_config_byte	linux_pci_read_config_byte
-#define	pci_read_config_word	linux_pci_read_config_word
-#define	pci_read_config_dword	linux_pci_read_config_dword
-#define	pci_write_config_byte	linux_pci_write_config_byte
-#define	pci_write_config_word	linux_pci_write_config_word
-#define	pci_write_config_dword	linux_pci_write_config_dword
+#include <linux/mod_devicetable.h>
 #include <linux/pci.h>
-#undef	pci_read_config_byte
-#undef	pci_read_config_word
-#undef	pci_read_config_dword
-#undef	pci_write_config_byte
-#undef	pci_write_config_word
-#undef	pci_write_config_dword
 
-#define	DRM_IRQ_ARGS		void *arg
-
-#define	BUILD_BUG_ON_NOT_POWER_OF_2(x)
+struct vt_kms_softc {
+	struct drm_fb_helper    *fb_helper;
+	struct task              fb_mode_task;
+};
+#define	DRM_IRQ_ARGS		int irq, void *arg
 
 #define	KHZ2PICOS(a)	(1000000000UL/(a))
 
@@ -51,7 +37,24 @@ __FBSDID("$FreeBSD$");
 	    tick_sbt * (timo), 0, C_HARDCLOCK)
 #define	drm_msleep(x, msg)	pause((msg), ((int64_t)(x)) * hz / 1000)
 #define	DRM_MSLEEP(msecs)	drm_msleep((msecs), "drm_msleep")
-
+#define DRM_WAIT_ON( ret, queue, timeout, condition )		\
+	do {							\
+	unsigned long end = ticks + (timeout);			\
+								\
+	for (;;) {						\
+		if (condition)						\
+			break;						\
+		if (ticks >= end) {					\
+			ret -EBUSY;					\
+			break;						\
+		}							\
+		pause("drm", (hz/100 > 1) ? hz/100 : 1);		\
+		if (SIGPENDING(curthread)) {				\
+			ret = -EINTR;					\
+			break;						\
+		}							\
+	}								\
+	} while (0)
 #define	DRM_READ8(map, offset)						\
 	*(volatile u_int8_t *)(((vm_offset_t)(map)->handle) +		\
 	    (vm_offset_t)(offset))
@@ -105,8 +108,6 @@ __FBSDID("$FreeBSD$");
 
 #define	DRM_AGP_KERN	struct agp_info
 #define	DRM_AGP_MEM	void
-
-#define	hweight32(i)		bitcount32(i)
 
 #define	IS_ALIGNED(x, y)	(((x) & ((y) - 1)) == 0)
 #define	get_unaligned(ptr)                                              \
@@ -256,9 +257,6 @@ capable(enum __drm_capabilities cap)
 #define	sigemptyset(set)	SIGEMPTYSET(set)
 #define	sigaddset(set, sig)	SIGADDSET(set, sig)
 
-#define DRM_LOCK(dev)		sx_xlock(&(dev)->dev_struct_lock)
-#define DRM_UNLOCK(dev) 	sx_xunlock(&(dev)->dev_struct_lock)
-
 MALLOC_DECLARE(DRM_MEM_DMA);
 MALLOC_DECLARE(DRM_MEM_SAREA);
 MALLOC_DECLARE(DRM_MEM_DRIVER);
@@ -308,12 +306,11 @@ extern const char *fb_mode_option;
 #undef	CONFIG_VGA_CONSOLE
 
 /* I2C compatibility. */
+#ifdef NO_3_9_TRANSITION
 #define	I2C_M_RD	IIC_M_RD
 #define	I2C_M_WR	IIC_M_WR
 #define	I2C_M_NOSTART	IIC_M_NOSTART
-
-struct fb_info *	framebuffer_alloc(void);
-void			framebuffer_release(struct fb_info *info);
+#endif
 
 #define	console_lock()
 #define	console_unlock()
@@ -322,54 +319,6 @@ void			framebuffer_release(struct fb_info *info);
 #define	PM_EVENT_SUSPEND	0x0002
 #define	PM_EVENT_QUIESCE	0x0008
 #define	PM_EVENT_PRETHAW	PM_EVENT_QUIESCE
-
-static inline int
-pci_read_config_byte(device_t kdev, int where, u8 *val)
-{
-
-	*val = (u8)pci_read_config(kdev, where, 1);
-	return (0);
-}
-
-static inline int
-pci_write_config_byte(device_t kdev, int where, u8 val)
-{
-
-	pci_write_config(kdev, where, val, 1);
-	return (0);
-}
-
-static inline int
-pci_read_config_word(device_t kdev, int where, uint16_t *val)
-{
-
-	*val = (uint16_t)pci_read_config(kdev, where, 2);
-	return (0);
-}
-
-static inline int
-pci_write_config_word(device_t kdev, int where, uint16_t val)
-{
-
-	pci_write_config(kdev, where, val, 2);
-	return (0);
-}
-
-static inline int
-pci_read_config_dword(device_t kdev, int where, uint32_t *val)
-{
-
-	*val = (uint32_t)pci_read_config(kdev, where, 4);
-	return (0);
-}
-
-static inline int
-pci_write_config_dword(device_t kdev, int where, uint32_t val)
-{
-
-	pci_write_config(kdev, where, val, 4);
-	return (0);
-}
 
 static inline void
 on_each_cpu(void callback(void *data), void *data, int wait)
@@ -386,5 +335,90 @@ do {									\
 	if (drm_debug && drm_notyet)					\
 		printf("NOTYET: %s at %s:%d\n", __func__, __FILE__, __LINE__); \
 } while (0)
+
+#define drm_proc_cleanup(a, b)
+
+
+/* Legacy VGA regions */
+#define VGA_RSRC_NONE	       0x00
+#define VGA_RSRC_LEGACY_IO     0x01
+#define VGA_RSRC_LEGACY_MEM    0x02
+#define VGA_RSRC_LEGACY_MASK   (VGA_RSRC_LEGACY_IO | VGA_RSRC_LEGACY_MEM)
+/* Non-legacy access */
+#define VGA_RSRC_NORMAL_IO     0x04
+#define VGA_RSRC_NORMAL_MEM    0x08
+
+
+enum vga_switcheroo_state {
+	VGA_SWITCHEROO_OFF,
+	VGA_SWITCHEROO_ON,
+	/* below are referred only from vga_switcheroo_get_client_state() */
+	VGA_SWITCHEROO_INIT,
+	VGA_SWITCHEROO_NOT_FOUND,
+};
+
+enum vga_switcheroo_client_id {
+	VGA_SWITCHEROO_IGD,
+	VGA_SWITCHEROO_DIS,
+	VGA_SWITCHEROO_MAX_CLIENTS,
+};
+
+struct vga_switcheroo_handler {
+	int (*switchto)(enum vga_switcheroo_client_id id);
+	int (*power_state)(enum vga_switcheroo_client_id id,
+			   enum vga_switcheroo_state state);
+	int (*init)(void);
+	int (*get_client_id)(struct pci_dev *dev);
+};
+
+struct vga_switcheroo_client_ops {
+	void (*set_gpu_state)(struct pci_dev *pdev, enum vga_switcheroo_state);
+	void (*reprobe)(struct pci_dev *pdev);
+	bool (*can_switch)(struct pci_dev *pdev);
+};
+
+struct linux_fb_info;
+
+static inline void vga_switcheroo_unregister_client(struct pci_dev *pdev) {}
+static inline int vga_switcheroo_register_client(struct pci_dev *pdev,
+		const struct vga_switcheroo_client_ops *ops) { return 0; }
+static inline void vga_switcheroo_client_fb_set(struct pci_dev *pdev, struct linux_fb_info *info) {}
+static inline int vga_switcheroo_register_handler(struct vga_switcheroo_handler *handler) { return 0; }
+static inline int vga_switcheroo_register_audio_client(struct pci_dev *pdev,
+	const struct vga_switcheroo_client_ops *ops,
+	int id, bool active) { return 0; }
+static inline void vga_switcheroo_unregister_handler(void) {}
+static inline int vga_switcheroo_process_delayed_switch(void) { return 0; }
+static inline int vga_switcheroo_get_client_state(struct pci_dev *pdev) { return VGA_SWITCHEROO_ON; }
+
+
+#define vga_client_register(a, b, c, d) 0
+#define vga_get_interruptible(a, b)
+#define vga_get_uninterruptible(a, b)
+#define vga_put(a, b)
+
+#define pm_qos_add_request(a, b, c)
+#define pm_qos_update_request(a, b)
+#define pm_qos_remove_request(a)
+
+#define pci_get_power_state pci_get_powerstate
+/* XXX ?? */
+#define pci_disable_device(dev)
+
+#define register_acpi_notifier(x)
+#define unregister_acpi_notifier(x)
+
+#define in_dbg_master() (kdb_active)
+#define do_gettimeofday microtime
+#define acpi_video_register()
+#define acpi_video_unregister()
+#define unregister_shrinker(x)
+#define drm_prime_gem_destroy(x, y)
+#define class_create_file(a, b)
+#define class_destroy_file(a, b)
+#define drm_sysfs_hotplug_event(a)
+
+
+#define CONFIG_X86_PAT
 
 #endif /* _DRM_OS_FREEBSD_H_ */

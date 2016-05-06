@@ -278,7 +278,7 @@ struct ttm_mem_type_manager {
 	uint32_t default_caching;
 	const struct ttm_mem_type_manager_func *func;
 	void *priv;
-	struct sx io_reserve_mutex;
+	struct mutex io_reserve_mutex;
 	bool use_io_reserve_lru;
 	bool io_reserve_fastpath;
 
@@ -486,8 +486,8 @@ struct ttm_bo_global {
 	struct ttm_mem_global *mem_glob;
 	struct vm_page *dummy_read_page;
 	struct ttm_mem_shrink shrink;
-	struct sx device_list_mutex;
-	struct mtx lru_lock;
+	struct mutex device_list_mutex;
+	spinlock_t lru_lock;
 
 	/**
 	 * Protected by device_list_mutex.
@@ -536,9 +536,9 @@ struct ttm_bo_device {
 	struct list_head device_list;
 	struct ttm_bo_global *glob;
 	struct ttm_bo_driver *driver;
-	struct rwlock vm_lock;
+	rwlock_t vm_lock;
 	struct ttm_mem_type_manager man[TTM_NUM_MEM_TYPES];
-	struct mtx fence_lock;
+	spinlock_t fence_lock;
 	/*
 	 * Protected by the vm lock.
 	 */
@@ -561,7 +561,7 @@ struct ttm_bo_device {
 	 * Internal protection.
 	 */
 
-	struct timeout_task wq;
+	struct delayed_work wq;
 
 	bool need_dma32;
 };
