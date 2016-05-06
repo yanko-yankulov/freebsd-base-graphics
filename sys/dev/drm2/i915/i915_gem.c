@@ -1596,7 +1596,7 @@ have_page:
 	}
 	DRM_UNLOCK(dev);
 	if (*mres != NULL) {
-		KASSERT(*mres != page, ("loosing %p %p", *mres, page));
+		KASSERT(*mres != page, ("losing %p %p", *mres, page));
 		vm_page_lock(*mres);
 		vm_page_free(*mres);
 		vm_page_unlock(*mres);
@@ -3145,7 +3145,7 @@ static bool i915_gem_valid_gtt_space(struct drm_device *dev,
 
 	/* On non-LLC machines we have to be careful when putting differing
 	 * types of snoopable memory together to avoid the prefetcher
-	 * crossing memory domains and dieing.
+	 * crossing memory domains and dying.
 	 */
 	if (HAS_LLC(dev))
 		return true;
