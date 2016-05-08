@@ -425,7 +425,7 @@ struct adapter {
 	struct e1000_hw		hw;
 
 	struct e1000_osdep	osdep;
-	device_t		dev;
+	struct device		*dev;
 	struct cdev		*led_dev;
 
 	struct resource		*pci_mem;

@@ -174,7 +174,7 @@ struct pcicfg_ea {
 
 /* config header information common to all header types */
 typedef struct pcicfg {
-    device_t	dev;		/* device which owns this */
+    struct device *dev;		/* device which owns this */
 
     STAILQ_HEAD(, pci_map) maps; /* BARs */
 

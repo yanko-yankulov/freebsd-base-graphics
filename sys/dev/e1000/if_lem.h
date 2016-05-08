@@ -298,7 +298,7 @@ struct adapter {
 
 	/* FreeBSD operating-system-specific structures. */
 	struct e1000_osdep osdep;
-	device_t	dev;
+	struct device	*dev;
 	struct cdev	*led_dev;
 
 	struct resource *memory;
