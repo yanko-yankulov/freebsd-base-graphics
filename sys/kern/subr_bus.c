@@ -84,7 +84,7 @@ struct driverlink {
  */
 typedef TAILQ_HEAD(devclass_list, devclass) devclass_list_t;
 typedef TAILQ_HEAD(driver_list, driverlink) driver_list_t;
-typedef TAILQ_HEAD(device_list, device) device_list_t;
+typedef TAILQ_HEAD(device_list, device_) device_list_t;
 
 struct devclass {
 	TAILQ_ENTRY(devclass) link;
@@ -103,7 +103,7 @@ struct devclass {
 /**
  * @brief Implementation of device.
  */
-struct device {
+struct device_ {
 	/*
 	 * A device is a kernel object. The first field must be the
 	 * current ops table for the object.
@@ -113,8 +113,8 @@ struct device {
 	/*
 	 * Device hierarchy.
 	 */
-	TAILQ_ENTRY(device)	link;	/**< list of devices in parent */
-	TAILQ_ENTRY(device)	devlink; /**< global device list membership */
+	TAILQ_ENTRY(device_)	link;	/**< list of devices in parent */
+	TAILQ_ENTRY(device_)	devlink; /**< global device list membership */
 	device_t	parent;		/**< parent of this device  */
 	device_list_t	children;	/**< list of child devices */
 
@@ -875,7 +875,7 @@ devctl_safe_quote(char *dst, const char *src, size_t len)
 
 /* End of /dev/devctl code */
 
-static TAILQ_HEAD(,device)	bus_data_devices;
+static TAILQ_HEAD(,device_)	bus_data_devices;
 static int bus_data_generation = 1;
 
 static kobj_method_t null_methods[] = {
@@ -1794,7 +1794,7 @@ make_device(device_t parent, const char *name, int unit)
 		dc = NULL;
 	}
 
-	dev = malloc(sizeof(struct device), M_BUS, M_NOWAIT|M_ZERO);
+	dev = malloc(sizeof(struct device_), M_BUS, M_NOWAIT|M_ZERO);
 	if (!dev)
 		return (NULL);
 
@@ -5194,7 +5194,7 @@ sysctl_devices(SYSCTL_HANDLER_ARGS)
 	int			*name = (int *)arg1;
 	u_int			namelen = arg2;
 	int			index;
-	struct device		*dev;
+	device_t		dev;
 	struct u_device		udev;	/* XXX this is a bit big */
 	int			error;
 

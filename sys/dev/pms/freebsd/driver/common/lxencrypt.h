@@ -81,14 +81,14 @@ struct agtiapi_softc *pCard;
 #ifdef ENCRYPT_ENHANCE
 
 
-ssize_t set_dek_table_entry0(struct device *dev, struct device_attribute *attr, const char *buf, size_t len);
-ssize_t show_dek_table_entry0(struct device *dev, struct device_attribute *attr, char *buf);
-ssize_t set_dek_table_entry1(struct device *dev, struct device_attribute *attr, const char *buf, size_t len);
-ssize_t show_dek_table_entry1(struct device *dev, struct device_attribute *attr, char *buf);
-ssize_t show_kek_table(struct device *dev, struct device_attribute *attr, char *buf);
-ssize_t show_dek_kek_map0(struct device *dev, struct device_attribute *attr, char *buf);
-ssize_t show_dek_kek_map1(struct device *dev, struct device_attribute *attr, char *buf);
-ssize_t show_target_dek_map(struct device *dev, struct device_attribute *attr, char *buf);
+ssize_t set_dek_table_entry0(device_t dev, struct device_attribute *attr, const char *buf, size_t len);
+ssize_t show_dek_table_entry0(device_t dev, struct device_attribute *attr, char *buf);
+ssize_t set_dek_table_entry1(device_t dev, struct device_attribute *attr, const char *buf, size_t len);
+ssize_t show_dek_table_entry1(device_t dev, struct device_attribute *attr, char *buf);
+ssize_t show_kek_table(device_t dev, struct device_attribute *attr, char *buf);
+ssize_t show_dek_kek_map0(device_t dev, struct device_attribute *attr, char *buf);
+ssize_t show_dek_kek_map1(device_t dev, struct device_attribute *attr, char *buf);
+ssize_t show_target_dek_map(device_t dev, struct device_attribute *attr, char *buf);
 
 #endif
 int agtiapi_SetupEncryption(struct agtiapi_softc *pCard);

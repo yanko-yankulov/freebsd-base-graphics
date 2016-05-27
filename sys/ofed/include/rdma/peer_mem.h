@@ -43,6 +43,7 @@
 #define IB_PEER_MEMORY_NAME_MAX 64
 #define IB_PEER_MEMORY_VER_MAX 16
 
+struct device;
 struct peer_memory_client {
 	char	name[IB_PEER_MEMORY_NAME_MAX];
 	char	version[IB_PEER_MEMORY_VER_MAX];

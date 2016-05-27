@@ -1094,7 +1094,10 @@ int iwch_register_device(struct iwch_dev *dev)
 	memcpy(dev->ibdev.node_desc, IWCH_NODE_DESC, sizeof(IWCH_NODE_DESC));
 	dev->ibdev.phys_port_cnt = sc->params.nports;
 	dev->ibdev.num_comp_vectors = 1;
+#ifdef __notyet__
+	/* confuses linux struct device with the freebsd device_t */
 	dev->ibdev.dma_device = dev->rdev.adap->dev;
+#endif	
 	dev->ibdev.query_device = iwch_query_device;
 	dev->ibdev.query_port = iwch_query_port;
 	dev->ibdev.modify_port = iwch_modify_port;

@@ -890,9 +890,9 @@ vm_offset_t vm_page_alloc_contig(vm_offset_t, vm_offset_t,
 #if defined(__OpenBSD__)
 static int      bktr_probe(struct device *, void *, void *);
 #else
-static int      bktr_probe(struct device *, struct cfdata *, void *);
+static int      bktr_probe(device_t, struct cfdata *, void *);
 #endif
-static void     bktr_attach(struct device *, struct device *, void *);
+static void     bktr_attach(device_t, struct device *, void *);
 
 struct cfattach bktr_ca = {
         sizeof(struct bktr_softc), bktr_probe, bktr_attach
@@ -908,7 +908,7 @@ struct cfdriver bktr_cd = {
 
 int
 bktr_probe(parent, match, aux)
-	struct device *parent;
+	device_t parent;
 #if defined(__OpenBSD__)
         void *match;
 #else
@@ -933,7 +933,7 @@ bktr_probe(parent, match, aux)
  * the attach routine.
  */
 static void
-bktr_attach(struct device *parent, struct device *self, void *aux)
+bktr_attach(device_t parent, device_t self, void *aux)
 {
 	bktr_ptr_t	bktr;
 	u_long		latency;
