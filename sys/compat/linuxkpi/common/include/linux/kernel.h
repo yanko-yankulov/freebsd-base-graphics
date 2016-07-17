@@ -305,6 +305,10 @@ long long simple_strtoll(const char *cp, char **endp, unsigned int base);
 
 
 
+long long simple_strtoll(const char *cp, char **endp, unsigned int base);
+
+
+
 #define min(x, y)	((x) < (y) ? (x) : (y))
 #define max(x, y)	((x) > (y) ? (x) : (y))
 
