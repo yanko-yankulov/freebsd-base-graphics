@@ -798,7 +798,6 @@ linux_cdev_pager_ctor(void *handle, vm_ooffset_t size, vm_prot_t prot,
 	vmap->vm_private_data = handle;
 
 	*color = 0;
-	vmap->vm_ops->open(vmap);
 	return (0);
 }
 
