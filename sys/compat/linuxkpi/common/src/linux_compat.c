@@ -109,8 +109,6 @@ MALLOC_DEFINE(M_LCINT, "linuxint", "Linux compat internal");
 #undef file
 #undef cdev
 
-static void *linux_cdev_handle_find(void *handle);
-
 struct cpuinfo_x86 boot_cpu_data; 
 
 struct kobject linux_class_root;
@@ -655,31 +653,47 @@ err:
 }
 #endif
 
+struct lcdev_handle {
+	atomic_t ref_count;
+	void *vma_private_data;
+	vm_offset_t	vma_pgoff;
+	struct linux_file *vma_file;
+	const struct vm_operations_struct *vma_ops;
+	
+	TAILQ_ENTRY(lcdev_handle)	link;
+};
+
 static int
 linux_cdev_pager_populate(vm_object_t vm_obj, vm_pindex_t pidx, int fault_type,
     vm_prot_t max_prot, vm_pindex_t *first, vm_pindex_t *last)
 {
 	struct vm_fault vmf;
-	struct vm_area_struct cvma, *vmap;
+	struct vm_area_struct cvma;
+	struct lcdev_handle *hndl;
 	int rc, err;
 
 	linux_set_current(curthread);
-
-	vmap = linux_cdev_handle_find(vm_obj->handle);
+	
+	hndl = vm_obj->handle;
 	vmf.virtual_address = (void *)(pidx << PAGE_SHIFT);
 	vmf.flags = (fault_type & VM_PROT_WRITE) ? FAULT_FLAG_WRITE : 0;
-	memcpy(&cvma, vmap, sizeof(*vmap));
-	MPASS(cvma.vm_private_data == vm_obj->handle);
-
+	
+	bzero(&cvma, sizeof(struct vm_area_struct));
+	cvma.vm_private_data = hndl->vma_private_data;
+	cvma.vm_start = 0;
+	cvma.vm_end = ( vm_obj->size - hndl->vma_pgoff ) * PAGE_SIZE;
+	cvma.vm_pgoff = hndl->vma_pgoff;
+	cvma.vm_pfn = 0;
+	cvma.vm_file = hndl->vma_file;
 	cvma.vm_pfn_count = 0;
 	cvma.vm_pfn_pcount = &cvma.vm_pfn_count;
 	cvma.vm_obj = vm_obj;
-
+	
 	VM_OBJECT_WUNLOCK(vm_obj);
-	err = vmap->vm_ops->fault(&cvma, &vmf);
+	err = hndl->vma_ops->fault(&cvma, &vmf);
 	while (cvma.vm_pfn_count == 0 && err == VM_FAULT_NOPAGE) {
 		kern_yield(0);
-		err = vmap->vm_ops->fault(&cvma, &vmf);
+		err = hndl->vma_ops->fault(&cvma, &vmf);
 	}
 	atomic_add_int(&cdev_pfn_found_count, cvma.vm_pfn_count);
 	VM_OBJECT_WLOCK(vm_obj);
@@ -713,90 +727,96 @@ err:
 	return (rc);
 }
 
-struct list_head lcdev_handle_list;
 
-struct lcdev_handle_ref {
-	void *handle;
-	void *data;
-	struct list_head list;
-};
+TAILQ_HEAD(, lcdev_handle) lcdev_handle_list = TAILQ_HEAD_INITIALIZER(lcdev_handle_list);
+
+
+
+static struct lcdev_handle *
+linux_cdev_handle_insert(struct vm_area_struct *vma)
+{
+	struct lcdev_handle *hndl, *list_hndl;
+	
+	hndl = malloc(sizeof(struct lcdev_handle), M_KMALLOC, M_WAITOK);
+	hndl->vma_private_data = vma->vm_private_data;
+	atomic_set( &hndl->ref_count, 1 );
+	hndl->vma_pgoff = vma->vm_pgoff;
+	hndl->vma_file = vma->vm_file;
+	hndl->vma_ops = vma->vm_ops;
+	
+	rw_wlock(&linux_global_rw);
+	TAILQ_FOREACH(list_hndl, &lcdev_handle_list, link) {
+		if( list_hndl->vma_private_data == hndl->vma_private_data && atomic_inc_not_zero( &list_hndl->ref_count ) ) {
+			
+			rw_wunlock(&linux_global_rw);
+			MPASS( hndl->vma_pgoff == list_hndl->vma_pgoff );
+			if( hndl->vma_file != list_hndl->vma_file )
+			{
+				/*
+				 Same object accessible through different files.
+				 Let's hope the Linux code don't really care about the file.
+				 If it diess, we will need to track the different mappings,
+				 and probably use the largest one
+				*/
+				
+				list_hndl->vma_file = NULL;
+			}
+			
+			MPASS( hndl->vma_ops == list_hndl->vma_ops );
+			free(hndl, M_KMALLOC);
+			return list_hndl;
+		}
+	}
+	
+	TAILQ_INSERT_TAIL( &lcdev_handle_list, hndl, link );
+	rw_wunlock(&linux_global_rw);
+	
+	return hndl;
+}
+
+static void linux_cdesv_handle_ref(struct lcdev_handle *hndl)
+{
+	MPASS( atomic_read(&hndl->ref_count) );
+	atomic_inc( &hndl->ref_count );
+}
 
 static void
-linux_cdev_handle_insert(void *handle, void *data, int size)
+linux_cdev_handle_remove(struct lcdev_handle *hndl)
 {
-	struct list_head *h;
-	struct lcdev_handle_ref *r;
-	void *datap;
+	if( atomic_dec_and_test( &hndl->ref_count ) ) {
+		rw_wlock(&linux_global_rw);
+		TAILQ_REMOVE( &lcdev_handle_list, hndl, link );
+		rw_wunlock(&linux_global_rw);
+		
+		free(hndl, M_KMALLOC);
+	}
+}
 
+
+void *
+linux_cdev_handle_find_by_pd(void *pd)
+{
+	struct lcdev_handle *hndl;
+	
 	rw_rlock(&linux_global_rw);
-	list_for_each(h, &lcdev_handle_list) {
-		r = __containerof(h, struct lcdev_handle_ref, list);
-		if (r->handle == handle) {
+	TAILQ_FOREACH(hndl, &lcdev_handle_list, link) {
+		if( hndl->vma_private_data == pd ) {
 			rw_runlock(&linux_global_rw);
-			return;
+			return hndl;
 		}
 	}
 	rw_runlock(&linux_global_rw);
-	r = malloc(sizeof(struct lcdev_handle_ref), M_KMALLOC, M_WAITOK);
-	r->handle = handle;
-	datap = malloc(size, M_KMALLOC, M_WAITOK);
-	memcpy(datap, data, size);
-	r->data = datap;
-	INIT_LIST_HEAD(&r->list); /* XXX why _HEAD? */
-	rw_wlock(&linux_global_rw);
-	/* XXX need to re-lookup */
-	list_add_tail(&r->list, &lcdev_handle_list);
-	rw_wunlock(&linux_global_rw);
+
+	
+	return NULL;
 }
 
-static void
-linux_cdev_handle_remove(void *handle)
-{
-	struct list_head *h;
-	struct lcdev_handle_ref *r;
-
-	rw_wlock(&linux_global_rw);	
-	list_for_each(h, &lcdev_handle_list) {
-		r = __containerof(h, struct lcdev_handle_ref, list);
-		if (r->handle == handle)
-			break;
-	}
-	MPASS (r && r->handle == handle);
-	list_del(&r->list);
-	rw_wunlock(&linux_global_rw);
-	free(r->data, M_KMALLOC);
-	free(r, M_KMALLOC);
-}
-
-static void *
-linux_cdev_handle_find(void *handle)
-{
-	struct list_head *h;
-	struct lcdev_handle_ref *r;
-	void *data;
-
-	rw_rlock(&linux_global_rw);
-	list_for_each(h, &lcdev_handle_list) {
-		r = __containerof(h, struct lcdev_handle_ref, list);
-		if (r->handle == handle)
-			break;
-	}
-	MPASS (r && r->handle == handle);
-	data = r->data;
-	rw_runlock(&linux_global_rw);
-	return (data);
-}
 
 static int
 linux_cdev_pager_ctor(void *handle, vm_ooffset_t size, vm_prot_t prot,
 		      vm_ooffset_t foff, struct ucred *cred, u_short *color)
 {
-	struct vm_area_struct *vmap;
-
-	vmap = linux_cdev_handle_find(handle);
-	MPASS(vmap != NULL);
-	vmap->vm_private_data = handle;
-
+	linux_cdesv_handle_ref(handle);
 	*color = 0;
 	return (0);
 }
@@ -804,14 +824,15 @@ linux_cdev_pager_ctor(void *handle, vm_ooffset_t size, vm_prot_t prot,
 static void
 linux_cdev_pager_dtor(void *handle)
 {
-	struct vm_area_struct *vmap;
+	struct lcdev_handle *hndl = handle;
+	struct vm_area_struct cvma;
+	
+	cvma.vm_private_data = hndl->vma_private_data;
+	
+	const struct vm_operations_struct *vma_ops = hndl->vma_ops;
+	linux_cdev_handle_remove(hndl);
 
-	vmap = linux_cdev_handle_find(handle);
-	MPASS(vmap != NULL);
-
-	vmap->vm_ops->close(vmap);
-	vmap->vm_private_data = handle;
-	linux_cdev_handle_remove(handle);
+	vma_ops->close(&cvma);
 }
 
 static struct cdev_pager_ops linux_cdev_pager_ops = {
@@ -1201,6 +1222,7 @@ linux_dev_mmap_single(struct cdev *dev, vm_ooffset_t *offset,
 	struct file *file;
 	struct vm_area_struct vma;
 	vm_memattr_t attr;
+	struct lcdev_handle *cdev_hndl;
 	int error;
 
 	td = curthread;
@@ -1230,13 +1252,12 @@ linux_dev_mmap_single(struct cdev *dev, vm_ooffset_t *offset,
 				MPASS(vma.vm_ops->open != NULL);
 				MPASS(vma.vm_ops->close != NULL);
 
-				linux_cdev_handle_insert(vma.vm_private_data, &vma, sizeof(struct vm_area_struct));
-				*object = cdev_pager_allocate(vma.vm_private_data, OBJT_MGTDEVICE,
+				cdev_hndl = linux_cdev_handle_insert(&vma);
+				*object = cdev_pager_allocate(cdev_hndl, OBJT_MGTDEVICE,
 							      &linux_cdev_pager_ops, size, nprot,
 							      *offset, curthread->td_ucred);
-
-				if (*object == NULL)
-					linux_cdev_handle_remove(vma.vm_private_data);
+				
+				linux_cdev_handle_remove(cdev_hndl);
 			} else {
 				sg = sglist_alloc(1, M_WAITOK);
 				sglist_append_phys(sg,
@@ -2019,7 +2040,6 @@ linux_compat_init(void *arg)
 	boot_cpu_data.x86_clflush_size = cpu_clflush_line_size;
 	boot_cpu_data.x86 = ((cpu_id & 0xF0000) >> 12) | ((cpu_id & 0xF0) >> 4);
 
-	INIT_LIST_HEAD(&lcdev_handle_list);
 	rootoid = SYSCTL_ADD_ROOT_NODE(NULL,
 	    OID_AUTO, "sys", CTLFLAG_RD|CTLFLAG_MPSAFE, NULL, "sys");
 	kobject_init(&linux_class_root, &linux_class_ktype);

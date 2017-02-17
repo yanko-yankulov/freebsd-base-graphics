@@ -337,4 +337,6 @@ struct vm_operations_struct {
 
 };
 
+void *linux_cdev_handle_find_by_pd(void *pd);
+
 #endif	/* _LINUX_MM_H_ */
