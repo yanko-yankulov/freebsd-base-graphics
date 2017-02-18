@@ -694,7 +694,6 @@ linux_cdev_pager_populate(vm_object_t vm_obj, vm_pindex_t pidx, int fault_type,
 	struct lcdev_handle *hndl;
 	int rc, err;
 
-	linux_set_current();
 	
 	hndl = vm_obj->handle;
 	vmf.virtual_address = (void *)(pidx << PAGE_SHIFT);
@@ -712,6 +711,9 @@ linux_cdev_pager_populate(vm_object_t vm_obj, vm_pindex_t pidx, int fault_type,
 	cvma.vm_obj = vm_obj;
 	
 	VM_OBJECT_WUNLOCK(vm_obj);
+	
+	linux_set_current();
+	
 	err = hndl->vma_ops->fault(&cvma, &vmf);
 	while (cvma.vm_pfn_count == 0 && err == VM_FAULT_NOPAGE) {
 		kern_yield(0);
