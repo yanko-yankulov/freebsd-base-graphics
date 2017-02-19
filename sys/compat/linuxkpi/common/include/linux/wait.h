@@ -550,7 +550,7 @@ finish_wait(wait_queue_head_t *q, wait_queue_t *wait)
 {
 	int flags;
 	MPASS(current != NULL);
-	MPASS(current->sleep_wq == q);
+	MPASS(current->sleep_wq == q || current->sleep_wq == NULL);
 
 	current->sleep_wq = NULL;
 	__set_current_state(TASK_RUNNING);
