@@ -384,14 +384,12 @@ do {									\
 	 ? 0 : __wait_event_interruptible_locked(wq, condition, 0, 0))
 
 
-#define __wait_event_interruptible_lock_irq(wq, condition, lock, cmd) ({panic("implement me!!! XXX"); 0;})
-#if 0
+#define __wait_event_interruptible_lock_irq(wq, condition, lock, cmd) \
 ___wait_event(wq, condition, TASK_INTERRUPTIBLE, 0, 0,			\
 		      spin_unlock_irq(&lock);				\
 		      cmd;						\
 		      schedule();					\
 		      spin_lock_irq(&lock))
-#endif
 
 #define wait_event_interruptible_lock_irq(wq, condition, lock)		\
 ({									\
