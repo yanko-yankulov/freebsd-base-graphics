@@ -120,6 +120,9 @@ debugfs_fill(PFS_FILL_ARGS)
 #ifdef INVARIANTS
 		printf("read/write return %d\n", rc);
 #endif
+		if( rc == -ERESTARTSYS )
+			return ERESTART;
+		
 		return (-rc);
 	}
 	return (0);
