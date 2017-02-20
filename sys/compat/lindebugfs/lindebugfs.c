@@ -96,6 +96,8 @@ debugfs_fill(PFS_FILL_ARGS)
 	vn.v_data = d->dm_data;
 	buf = uio->uio_iov[0].iov_base;
 	len = min(uio->uio_iov[0].iov_len, uio->uio_resid);
+	uio->uio_offset = 0;
+	
 	off = 0;
 	lf.private_data = NULL;
 	rc = d->dm_fops->open(&vn, &lf);
@@ -106,11 +108,29 @@ debugfs_fill(PFS_FILL_ARGS)
 		return (-rc);
 	}
 	sf = lf.private_data;
-	sf->buf = sb;
+	
 	if (uio->uio_rw == UIO_READ)
-		rc = d->dm_fops->read(&lf, NULL, len, &off);
+	{
+		len = min(len, sb->s_size);
+		sf->buf = sb;
+		rc = d->dm_fops->read(&lf, buf, len, &off);
+		
+		if( sbuf_len(sb) == 0 && rc > 0 )
+			sbuf_bcopyin( sb, buf, rc );
+	}
 	else
-		rc = d->dm_fops->write(&lf, buf, len, &off);
+	{
+		struct sbuf sb_local;
+		int error;
+		
+		sbuf_uionew(&sb_local, uio, &error);
+		if( error )
+			return error;
+		
+		sf->buf = &sb_local;
+		rc = d->dm_fops->write(&lf,  buf, len, &off);
+		sbuf_delete(&sb_local);
+	}
 	if (d->dm_fops->release)
 		d->dm_fops->release(&vn, &lf);
 	else
@@ -150,7 +170,7 @@ debugfs_create_file(const char *name, umode_t mode,
 	else
 		pnode = debugfs_root;
 	
-	flags = fops->write ? PFS_RDWR : PFS_RD;
+	flags = ( fops->write ? PFS_RDWR : PFS_RD ) | PFS_RAWWR;
 	dnode->d_pfs_node = pfs_create_file(pnode, name, debugfs_fill,
 	    debugfs_attr, NULL, debugfs_destroy, flags);
 	dnode->d_pfs_node->pn_data = dm;
