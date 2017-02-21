@@ -276,6 +276,7 @@ free_anon_mapping(struct address_space *as)
 static int shm_file_mmap(struct linux_file *filp, struct vm_area_struct *vma)
 {
 	vma->vm_file = get_file(filp);
+	vma->vm_obj = filp->f_mapping;
 	return 0;
 }
 

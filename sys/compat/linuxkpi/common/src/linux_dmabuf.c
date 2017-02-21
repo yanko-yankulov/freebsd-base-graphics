@@ -138,6 +138,7 @@ dma_buf_mmap_fileops(struct file *fp, vm_map_t map, vm_offset_t *addr,
 {
 	struct dma_buf *db;
 	struct vm_area_struct vma;
+	int error;
 
 	if (!fp_is_db(fp))
 		return (EINVAL);
@@ -149,9 +150,22 @@ dma_buf_mmap_fileops(struct file *fp, vm_map_t map, vm_offset_t *addr,
 	vma.vm_start = *addr;
 	vma.vm_end = *addr + size;
 	vma.vm_pgoff = foff;
+	vma.vm_obj = NULL;
 	/* XXX do we need to fill in / propagate other flags? */
 	
-	return (-db->ops->mmap(db, &vma));
+	error = (-db->ops->mmap(db, &vma));
+	if( error )
+		return error;
+	
+	vm_object_reference(vma.vm_obj);
+	
+	error = vm_mmap_object(map, addr, size, prot, cap_maxprot, flags, 
+		vma.vm_obj, foff, FALSE, td );
+	
+	if( error != 0 )
+		vm_object_deallocate(vma.vm_obj);
+	
+	return error;
 }
 
 static int
