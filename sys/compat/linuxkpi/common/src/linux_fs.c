@@ -273,12 +273,24 @@ free_anon_mapping(struct address_space *as)
 		vm_object_deallocate(as);
 }
 
+static int shm_file_mmap(struct linux_file *filp, struct vm_area_struct *vma)
+{
+	vma->vm_file = get_file(filp);
+	return 0;
+}
+
+
+struct file_operations linux_shm_fops = {
+	.mmap = shm_file_mmap
+};
+
 struct linux_file *
 shmem_file_setup(char *name, loff_t size, unsigned long flags)
 {
 	struct fileobj {
 		struct linux_file file __aligned(sizeof(void *));
 		struct vnode vnode __aligned(sizeof(void *));
+		__typeof( *((struct file*)0)->_file) pseudo_file  __aligned(sizeof(void *));
 	};
 	struct fileobj *fileobj;
 	struct linux_file *filp;
@@ -291,14 +303,20 @@ shmem_file_setup(char *name, loff_t size, unsigned long flags)
 		goto err_0;
 	}
 	filp = &fileobj->file;
+	filp->_file = &fileobj->pseudo_file;
 	vp = &fileobj->vnode;
+	refcount_init(&filp->_file->f_count, 1);
+	
+	
 
 	filp->f_dentry = &filp->f_dentry_store;
 	filp->f_vnode = vp;
 	filp->f_mapping = file_inode(filp)->i_mapping =
 	    vm_pager_allocate(OBJT_DEFAULT, NULL, size,
 	    VM_PROT_READ | VM_PROT_WRITE, 0, curthread->td_ucred);
-
+	
+	filp->f_op = &linux_shm_fops;
+	
 	if (file_inode(filp)->i_mapping == NULL) {
 		error = -ENOMEM;
 		goto err_1;
@@ -442,7 +460,7 @@ void
 linux_file_free(struct linux_file *filp)
 {
 
-	if (filp->_file == NULL) {
+	if (filp->f_op == &linux_shm_fops) {
 		struct vnode *vp = filp->f_vnode;
 		if (vp != NULL && vp->i_mapping != NULL)
 			vm_object_deallocate(vp->i_mapping);

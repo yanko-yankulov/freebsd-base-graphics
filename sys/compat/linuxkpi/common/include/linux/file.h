@@ -64,7 +64,7 @@ extern void linux_file_free(struct linux_file *filp);
 static inline void
 fput(struct linux_file *filp)
 {
-	if (filp->_file == NULL || refcount_release(&filp->_file->f_count))
+	if ( refcount_release(&filp->_file->f_count))
 		linux_file_free(filp);
 }
 
